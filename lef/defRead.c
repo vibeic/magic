@@ -178,8 +178,29 @@ DefAddRoutes(
 
 	    if (routeLayer < 0)
 	    {
-		LefError(DEF_ERROR, "Unknown layer type \"%s\" for NEW route\n", token);
-		continue;
+		/* vibeic LVS-fidelity fix: An unmapped DEF layer previously caused
+		 * the ENTIRE route to be discarded (the "continue" dropped all of
+		 * its geometry, and for SPECIALNETS also desynchronized the parser
+		 * so the following width token was misread as a via name).  Dropping
+		 * the shape corrupts extraction/LVS by silently removing connectivity.
+		 * Instead, RETAIN the geometry on a generic fallback layer (the first
+		 * technology-dependent user layer) and warn, so the shape survives the
+		 * read and can be remapped rather than lost.  lefl is already NULL here,
+		 * so downstream width/rule handling falls back to defaults correctly.
+		 */
+		TileType fallbackLayer =
+			(DBNumUserLayers > TT_TECHDEPBASE) ? TT_TECHDEPBASE : -1;
+		if (fallbackLayer < 0)
+		{
+		    LefError(DEF_ERROR, "Unknown layer type \"%s\" for NEW route; "
+			    "no fallback layer available in this technology, "
+			    "geometry dropped.\n", token);
+		    continue;
+		}
+		LefError(DEF_WARNING, "Unknown layer type \"%s\" for NEW route; "
+			"retaining geometry on generic fallback layer \"%s\".\n",
+			token, DBTypeShortName(fallbackLayer));
+		routeLayer = fallbackLayer;
 	    }
 	    paintLayer = routeLayer;
 
