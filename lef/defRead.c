@@ -79,6 +79,68 @@ enum def_netspecial_shape_keys {
 	DEF_SPECNET_SHAPE_FILLWIREOPC,
 	DEF_SPECNET_SHAPE_DRCFILL};
 
+/*
+ *------------------------------------------------------------
+ * defFindAdjacentVia --
+ *
+ *	vibeic LVS-fidelity helper.  Given a routing layer, return the
+ *	tech contact (via) type that connects it to the nearest adjacent
+ *	routing layer (preferring the layer one plane UP, i.e. the "via
+ *	up"; falling back to the nearest layer DOWN for a topmost layer).
+ *	Used to RETAIN connectivity when a DEF route references a via
+ *	name that magic cannot resolve (e.g. a non-default-rule via not
+ *	declared in the LEF or DEF VIAS section).  Only real tech contact
+ *	types are ever returned -- no geometry is fabricated on layers the
+ *	technology does not define.  Returns -1 if no such contact exists.
+ *------------------------------------------------------------
+ */
+
+static TileType
+defFindAdjacentVia(
+    TileType baseLayer)
+{
+    TileType ct, r, other, best = -1;
+    int basePlane, otherPlane, bestPlane = -1;
+    TileTypeBitMask *rmask;
+
+    if (baseLayer < 0) return -1;
+    basePlane = DBPlane(baseLayer);
+
+    /* First pass: nearest contact whose other residue is one plane UP. */
+    for (ct = TT_TECHDEPBASE; ct < DBNumUserLayers; ct++)
+    {
+	if (!DBIsContact(ct)) continue;
+	rmask = DBResidueMask(ct);
+	if (!TTMaskHasType(rmask, baseLayer)) continue;
+	other = -1;
+	for (r = TT_TECHDEPBASE; r < DBNumUserLayers; r++)
+	    if ((r != baseLayer) && TTMaskHasType(rmask, r)) { other = r; break; }
+	if (other < 0) continue;
+	otherPlane = DBPlane(other);
+	if (otherPlane > basePlane)
+	    if ((best < 0) || (otherPlane < bestPlane))
+		{ best = ct; bestPlane = otherPlane; }
+    }
+    if (best >= 0) return best;
+
+    /* Second pass: no via up (topmost layer); take nearest contact DOWN. */
+    for (ct = TT_TECHDEPBASE; ct < DBNumUserLayers; ct++)
+    {
+	if (!DBIsContact(ct)) continue;
+	rmask = DBResidueMask(ct);
+	if (!TTMaskHasType(rmask, baseLayer)) continue;
+	other = -1;
+	for (r = TT_TECHDEPBASE; r < DBNumUserLayers; r++)
+	    if ((r != baseLayer) && TTMaskHasType(rmask, r)) { other = r; break; }
+	if (other < 0) continue;
+	otherPlane = DBPlane(other);
+	if (otherPlane < basePlane)
+	    if ((best < 0) || (otherPlane > bestPlane))
+		{ best = ct; bestPlane = otherPlane; }
+    }
+    return best;
+}
+
 const char *
 DefAddRoutes(
     CellDef *rootDef,		/* Cell to paint */
@@ -548,7 +610,38 @@ DefAddRoutes(
 		}
 	    }
 	    else
-		LefError(DEF_ERROR, "Via name \"%s\" unknown in route.\n", token);
+	    {
+		/* vibeic LVS-fidelity fix: The via name did not resolve to	*/
+		/* any LEF/DEF via or magic layer (e.g. a non-default-rule via	*/
+		/* emitted by the router but not declared in LEF/DEF VIAS).	*/
+		/* Previously the via was dropped, silently breaking the layer-	*/
+		/* to-layer connection at this point and leaving an OPEN for	*/
+		/* LVS/extraction.  Instead, retain a REAL tech via that		*/
+		/* connects the current route layer to its adjacent routing	*/
+		/* layer, so the intended connectivity survives the read.	*/
+		TileType viaContact = defFindAdjacentVia(routeLayer);
+		if ((viaContact >= 0) && (valid == TRUE))
+		{
+		    LefError(DEF_WARNING, "Via name \"%s\" unknown in route; "
+			    "retaining a \"%s\" via to preserve connectivity "
+			    "from layer \"%s\".\n", token,
+			    DBTypeShortName(viaContact),
+			    DBTypeShortName(routeLayer));
+		    newRoute = (LinkedRect *)mallocMagic(sizeof(LinkedRect));
+		    newRoute->r_r.r_xbot = refp.p_x - paintWidth;
+		    newRoute->r_r.r_ybot = refp.p_y - paintWidth;
+		    newRoute->r_r.r_xtop = refp.p_x + paintWidth;
+		    newRoute->r_r.r_ytop = refp.p_y + paintWidth;
+		    newRoute->r_r.r_xbot >>= 1;
+		    newRoute->r_r.r_ybot >>= 1;
+		    newRoute->r_r.r_xtop >>= 1;
+		    newRoute->r_r.r_ytop >>= 1;
+		    paintLayer = viaContact;
+		}
+		else
+		    LefError(DEF_ERROR, "Via name \"%s\" unknown in route.\n",
+			    token);
+	    }
 	}
 	else
 	{
@@ -1085,6 +1178,7 @@ DefReadNets(
     LefRules *ruleset = NULL;
     HashEntry *he;
     bool needanno;
+    bool ispwrgnd = FALSE;	/* vibeic: current SPECIALNET is + USE POWER/GROUND */
 
     static const char * const net_keys[] = {
 	"-",
@@ -1133,8 +1227,12 @@ DefReadNets(
 
 		/* Get net name */
 		token = LefNextToken(f, TRUE);
-		if (dolabels) netname = StrDup((char **)NULL, token);
+		/* vibeic LVS-fidelity: capture the net name for SPECIALNETS too	*/
+		/* (not only when -labels is given), so that a + USE POWER/GROUND	*/
+		/* net can be name-anchored for downstream LVS/extraction.		*/
+		if (dolabels || special) netname = StrDup((char **)NULL, token);
 		needanno = annotate;
+		ispwrgnd = FALSE;
 
 		/* Update the record of the number of nets processed	*/
 		/* and spit out a message for every 5% finished.	*/
@@ -1228,6 +1326,14 @@ DefReadNets(
 			    prnet = NULL;
 			    if (dolabels && (needanno || (!annotate)))
 				prnet = netname;
+			    /* vibeic LVS-fidelity fix: A power/ground SPECIALNET	*/
+			    /* (+ USE POWER / + USE GROUND) previously lost its name	*/
+			    /* on a plain "def read" (no -labels), leaving the power	*/
+			    /* rails as anonymous geometry that LVS/extraction cannot	*/
+			    /* anchor to the correct global node.  Always propagate the	*/
+			    /* name of a power/ground special net onto its geometry.	*/
+			    else if (special && ispwrgnd && (netname != NULL) && !annotate)
+				prnet = netname;
 			    token = DefAddRoutes(rootDef, f, oscale, special,
 					prnet, ruleset, defLayerMap, annotate);
 			    ruleset = NULL;
@@ -1246,12 +1352,21 @@ DefReadNets(
 			    	LefError(DEF_ERROR, "Unknown nondefault rule \"%s\"\n", token);
 			    break;
 
+			case DEF_NETPROP_USE:
+			    /* vibeic LVS-fidelity: absorb the USE class token, and	*/
+			    /* flag POWER/GROUND special nets so their name is later	*/
+			    /* propagated onto the geometry for LVS anchoring.		*/
+			    token = LefNextToken(f, TRUE);
+			    if (special && (!strcasecmp(token, "POWER") ||
+					!strcasecmp(token, "GROUND")))
+				ispwrgnd = TRUE;
+			    break;
+
 			case DEF_NETPROP_PROPERTY:
 			    /* Ignore except to absorb the next two tokens. */
 			    token = LefNextToken(f, TRUE);  /* Drop through */
 
 			case DEF_NETPROP_SOURCE:
-			case DEF_NETPROP_USE:
 			case DEF_NETPROP_SHIELDNET:
 			case DEF_NETPROP_SUBNET:
 			case DEF_NETPROP_XTALK:
@@ -1274,7 +1389,11 @@ DefReadNets(
 			    break;
 		    }
 		}
-		if (dolabels) freeMagic(netname);
+		if (dolabels || special)
+		{
+		    if (netname != NULL) freeMagic(netname);
+		    netname = NULL;
+		}
 		break;
 
 	    case DEF_NET_END:
