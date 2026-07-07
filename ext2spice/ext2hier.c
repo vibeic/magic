@@ -2383,6 +2383,19 @@ esHierVisit(
 		locDoSubckt = TRUE;
 		break;
 	    }
+
+	/* vibeic fork (LVS fidelity):  a top cell whose layout never had
+	 * "port makeall" run on it has no EF_PORT nodes at all, so the
+	 * scan above leaves locDoSubckt FALSE and the whole subcircuit
+	 * (and its labeled nets) is dropped in favor of a bare ".end" --
+	 * exactly the "top .subckt with an empty port list" (here, no
+	 * .subckt at all) LVS-fidelity gap.  Auto-promote real labeled
+	 * nets to ports (same rule as esAutoPromoteTopPorts() in
+	 * ext2spice.c) before giving up.  Disable with "ext2spice port
+	 * makeall off".
+	 */
+	if ((locDoSubckt == FALSE) && esDoAutoTopPorts)
+	    locDoSubckt = esAutoPromoteTopPorts(def);
     }
 
     /* Generate subcircuit header */

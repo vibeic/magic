@@ -35,6 +35,8 @@ extern const char *nodeSpiceName(const HierName *hname, EFNode **rnode);
 extern int nodeVisitDebug(EFNode *node, int res, double cap, ClientData cdata); /* @typedef cb_extflat_visitnodes_t (UNUSED) */
 extern void topVisit(Def *def, bool doStub);
 extern void swapDrainSource(Dev *dev);
+/* vibeic fork (LVS fidelity): see ext2spice.c for details */
+extern bool esAutoPromoteTopPorts(Def *def);
 
 extern const char *nodeSpiceHierName(HierContext *hc, const HierName *hname);
 extern devMerge *mkDevMerge(float l, float w, EFNode *g, EFNode *s, EFNode *d, EFNode *b, HierName *hn, Dev *dev);
@@ -69,6 +71,8 @@ extern int  esDoSubckt;
 extern bool esDevNodesOnly;
 extern bool esNoAttrs;
 extern bool esHierAP;
+/* vibeic fork (LVS fidelity): see ext2spice.c for details */
+extern bool esDoAutoTopPorts;
 extern char spcesDefaultOut[FNSIZE];
 extern const char *esSpiceCapNode;
 extern const char esSpiceDefaultGnd[];

@@ -57,6 +57,11 @@ bool esDevNodesOnly = FALSE;
 bool esMergeNames = TRUE;
 bool esNoAttrs = FALSE;
 bool esHierAP = FALSE;
+/* vibeic fork (LVS fidelity): default-on auto "port makeall" equivalent
+ * for the top-level cell (see topVisit()); "ext2spice port makeall off"
+ * restores the stock behavior of only emitting explicitly-made ports.
+ */
+bool esDoAutoTopPorts = TRUE;
 char spcesDefaultOut[FNSIZE];
 const char *esSpiceCapNode;
 const char esSpiceDefaultGnd[] = "0";
@@ -254,7 +259,8 @@ Exttospice_Init(
 #define EXTTOSPC_RENUMBER	13
 #define EXTTOSPC_MERGENAMES	14
 #define EXTTOSPC_LVS		15
-#define EXTTOSPC_HELP		16
+#define EXTTOSPC_PORTMAKEALL	16
+#define EXTTOSPC_HELP		17
 
 void
 CmdExtToSpice(
@@ -308,6 +314,8 @@ CmdExtToSpice(
 	"			off = keep instance ID names",
 	"global [on|off]	on = merge unconnected global nets by name",
 	"lvs    		apply typical default settings for LVS",
+	"port makeall [on|off]	auto-promote unlabeled top-level nets to ports\n"
+	"			(default on; vibeic fork, mirrors \"port makeall\")",
 	"help			print help information",
 	NULL
     };
@@ -571,6 +579,35 @@ CmdExtToSpice(
 	    esDoBlackBox = TRUE;
 	    esMergeNames = FALSE;
 	    esDoSubckt = 2;
+	    break;
+
+	/* vibeic fork (LVS fidelity):  "ext2spice port makeall [on|off]" */
+	case EXTTOSPC_PORTMAKEALL:
+	    if (cmd->tx_argc == 2)
+	    {
+#ifdef MAGIC_WRAPPER
+		Tcl_SetResult(magicinterp, (esDoAutoTopPorts) ? "on" : "off", NULL);
+#else
+		TxPrintf("Port makeall:  %s\n", (esDoAutoTopPorts) ? "on" : "off");
+#endif
+		return;
+	    }
+	    if (strcmp(cmd->tx_argv[2], "makeall")) goto usage;
+	    if (cmd->tx_argc == 3)
+	    {
+#ifdef MAGIC_WRAPPER
+		Tcl_SetResult(magicinterp, (esDoAutoTopPorts) ? "on" : "off", NULL);
+#else
+		TxPrintf("Port makeall:  %s\n", (esDoAutoTopPorts) ? "on" : "off");
+#endif
+		return;
+	    }
+	    else if (cmd->tx_argc != 4)
+		goto usage;
+	    idx = Lookup(cmd->tx_argv[3], yesno);
+	    if (idx < 0) goto usage;
+	    else if (idx < 3) esDoAutoTopPorts = TRUE;
+	    else esDoAutoTopPorts = FALSE;
 	    break;
 
 	case EXTTOSPC_SUBCIRCUITS:
@@ -1133,6 +1170,14 @@ runexttospice:
 	if (esDoSubckt == AUTO) {
 	    if (efFlatRootDef->def_flags & DEF_SUBCIRCUIT)
 		locDoSubckt = TRUE;
+	    /* vibeic fork (LVS fidelity): a top cell with no DEF_SUBCIRCUIT
+	     * flag (no port ever explicitly made) but with real net labels
+	     * should still get a .subckt wrapper once those labels are
+	     * auto-promoted to ports below, instead of silently emitting
+	     * no top-level subcircuit at all.
+	     */
+	    else if (esDoAutoTopPorts && esAutoPromoteTopPorts(efFlatRootDef))
+		locDoSubckt = TRUE;
 	}
 	if ((esDoSubckt == TRUE) || (locDoSubckt == TRUE))
 	    topVisit(efFlatRootDef, FALSE);
@@ -1325,6 +1370,9 @@ main(
     locDoSubckt = FALSE;
     if (esDoSubckt == AUTO) {
 	if (efFlatRootDef->def_flags & DEF_SUBCIRCUIT)
+	    locDoSubckt = TRUE;
+	/* vibeic fork (LVS fidelity): see the matching comment above	*/
+	else if (esDoAutoTopPorts && esAutoPromoteTopPorts(efFlatRootDef))
 	    locDoSubckt = TRUE;
     }
     if ((esDoSubckt == TRUE) || (locDoSubckt == TRUE))
@@ -1814,6 +1862,76 @@ subcktUndef(
     return 0;
 }
 
+/*
+ * ----------------------------------------------------------------------------
+ *
+ * esAutoPromoteTopPorts --
+ *
+ * vibeic fork (LVS fidelity):  a flat top-level extraction whose layout
+ * never had "port makeall" run on it emits a .subckt with an empty (or
+ * short) port list, since only nodes carrying the EF_PORT flag (set from
+ * an explicit "port" label recorded in the .ext file) are ever considered
+ * ports.  This makes that promotion automatic for the top cell: any node
+ * whose canonical name is a real label -- not one of the "planeName_x_y#"
+ * placeholders Magic synthesizes for an unlabeled node (extNodeName() /
+ * extMakeNodeNumPrint() in ext/ExtBasic.c always suffix those with '#') --
+ * and that isn't already a port becomes an implicit (unindexed) one, in
+ * the exact form topVisit()'s existing scan numbers sequentially.  Only
+ * the node's canonical name (the def_nodes hash entry equal to
+ * snode->efnode_name) is touched, so a net with several alias labels
+ * still yields exactly one port.  Disable with "ext2spice port makeall
+ * off" to get the old (labels-not-promoted) behavior.
+ *
+ * Results:
+ *	TRUE if the def has at least one EF_PORT node (pre-existing or
+ *	newly promoted here), FALSE if it has none at all (e.g., a
+ *	completely unlabeled flat extraction).  Callers use this to decide
+ *	whether the top cell should be wrapped in a .subckt at all when
+ *	"ext2spice subcircuits top auto" (the default) would otherwise
+ *	skip it for lack of a DEF_SUBCIRCUIT flag.
+ *
+ * Side effects:
+ *	May set EF_PORT on nodes in def->def_nodes.
+ *
+ * ----------------------------------------------------------------------------
+ */
+
+bool
+esAutoPromoteTopPorts(Def *def)
+{
+    HashSearch ahs;
+    HashEntry *ahe;
+    EFNodeName *asname;
+    EFNode *asnode;
+    const char *aname;
+    int alen;
+    bool found = FALSE;
+
+    HashStartSearch(&ahs);
+    while ((ahe = HashNext(&def->def_nodes, &ahs)))
+    {
+	asname = (EFNodeName *) HashGetValue(ahe);
+	if (asname == NULL) continue;
+	asnode = asname->efnn_node;
+	if (asnode == NULL) continue;
+
+	if (asnode->efnode_flags & EF_PORT)
+	{
+	    found = TRUE;
+	    continue;
+	}
+	if (asname != asnode->efnode_name) continue;	/* once per node */
+
+	aname = ahe->h_key.h_name;
+	alen = strlen(aname);
+	if (alen == 0 || aname[alen - 1] == '#') continue;	/* synthetic */
+
+	asnode->efnode_flags |= EF_PORT;
+	found = TRUE;
+    }
+    return found;
+}
+
 /* Define a linked node name list */
 
 typedef struct _lnn {
@@ -1874,6 +1992,9 @@ topVisit(
 
     /* Primitive devices are not output at all */
     if (def->def_flags & DEF_PRIMITIVE) return;
+
+    /* vibeic fork (LVS fidelity):  auto-promote unlabeled top-level nets */
+    if (!doStub && esDoAutoTopPorts) esAutoPromoteTopPorts(def);
 
     HashInit(&portNameTable, 32, HT_STRINGKEYS);
 
