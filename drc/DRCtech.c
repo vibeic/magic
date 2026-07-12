@@ -4482,6 +4482,14 @@ DRCGetDefaultLayerWidth(ttype)
 	return 0;
     }
 
+    /* No DRC style loaded yet (e.g. a techfile whose "lef" section precedes
+     * its "drc" section, or defines no drc style at all): there is no DRC
+     * default width to report.  Return 0 so the LEF reader falls back to its
+     * provisional DEFAULT_WIDTH — never dereference a NULL DRCCurStyle.  This
+     * matches the NULL-guard the other DRCGet* getters already carry.
+     */
+    if (DRCCurStyle == NULL) return 0;
+
     for (cptr = DRCCurStyle->DRCRulesTbl[TT_SPACE][ttype]; cptr != (DRCCookie *) NULL;
 	cptr = cptr->drcc_next)
     {
@@ -4541,6 +4549,12 @@ DRCGetDefaultLayerSpacing(ttype1, ttype2)
     int routeSpacing = 0;
     DRCCookie *cptr;
     TileTypeBitMask *set;
+
+    /* No DRC style loaded yet — no DRC default spacing to report.  Return 0 so
+     * the LEF reader falls back to its provisional DEFAULT_SPACING, never
+     * dereferencing a NULL DRCCurStyle (mirrors DRCGetDefaultLayerWidth and the
+     * NULL-guard the other DRCGet* getters already carry). */
+    if (DRCCurStyle == NULL) return 0;
 
     for (cptr = DRCCurStyle->DRCRulesTbl[ttype1][TT_SPACE]; cptr != (DRCCookie *) NULL;
 	cptr = cptr->drcc_next)

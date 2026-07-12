@@ -11,6 +11,22 @@ global Opts
 variable MAGIC_TCL_DIR [file dirname [file normalize [info script]]]
 variable CAD_ROOT_DEFAULT [file normalize [file join $MAGIC_TCL_DIR ../..]]
 
+# vibeic fork (LVS fidelity): make magic self-sufficient in BATCH mode.
+# tclmagic.so's C initialisation (run during the `load` below) resolves its
+# startup-tech search path from getenv("CAD_ROOT") (compiled template
+# "$CAD_ROOT/magic/sys"). With CAD_ROOT unset — the common case for a
+# `magic -dnull -noconsole` batch run driven by a headless flow — that path
+# collapses to "/magic/sys", minimum.tech is not found, and magic aborts
+# initialisation BEFORE reading the design .rcfile, silently extracting
+# nothing (rc=0, no netlist). The interactive path happens to have CAD_ROOT
+# exported by the user's shell; batch runs do not. This block seeds
+# env(CAD_ROOT) from the install-derived default ($prefix/lib, computed above)
+# whenever it is unset/empty, so the load-time C init finds its sys tech. It
+# never overrides a CAD_ROOT the environment already provides.
+if {![info exists env(CAD_ROOT)] || [string trim $env(CAD_ROOT)] eq ""} {
+   set env(CAD_ROOT) $CAD_ROOT_DEFAULT
+}
+
 if {${tcl_version} >= 8.6} {
    load -lazy [file join $MAGIC_TCL_DIR tclmagic[info sharedlibextension]]
 } else {
