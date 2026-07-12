@@ -1802,6 +1802,16 @@ DefReadPins(
 					rot = 90;
 				    }
 				    size = DRCGetDefaultLayerWidth(rectList->r_type);
+				    /* vibeic fork (LVS fidelity): guard the font-size
+				     * doubling loop. DRCGetDefaultLayerWidth() returns 0
+				     * for a routing/pin layer that has no DRC `width` rule
+				     * (or when no DRC style is loaded); the loop below then
+				     * never terminates because 0<<1 == 0 < any positive
+				     * height, spinning `def read` at 100%% CPU forever the
+				     * instant a DEF PIN lands on such a layer. CalmaRdpt.c
+				     * already guards the identical getter with `if (size >
+				     * 0)`; mirror that here so label sizing always ends. */
+				    if (size <= 0) size = 1;
 				    while ((size << 1) < height) size <<= 1;
 				    size <<= 3;		/* Fonts are in 8x units */
 				    DBPutFontLabel(rootDef, &topRect,
@@ -1852,6 +1862,16 @@ DefReadPins(
 					rot = 90;
 				    }
 				    size = DRCGetDefaultLayerWidth(rectList->r_type);
+				    /* vibeic fork (LVS fidelity): guard the font-size
+				     * doubling loop. DRCGetDefaultLayerWidth() returns 0
+				     * for a routing/pin layer that has no DRC `width` rule
+				     * (or when no DRC style is loaded); the loop below then
+				     * never terminates because 0<<1 == 0 < any positive
+				     * height, spinning `def read` at 100%% CPU forever the
+				     * instant a DEF PIN lands on such a layer. CalmaRdpt.c
+				     * already guards the identical getter with `if (size >
+				     * 0)`; mirror that here so label sizing always ends. */
+				    if (size <= 0) size = 1;
 				    while ((size << 1) < height) size <<= 1;
 				    size <<= 3;		/* Fonts are in 8x units */
 
