@@ -1,0 +1,9 @@
+* top schematic (golden) -- abstract buf cells chained; inter-cell nets
+* n01 (u0.Z->u1.A) and n12 (u1.Z->u2.A) route UP the metal stack in the layout.
+.subckt buf A Z VPWR VGND
+.ends
+.subckt top in out VSUBS
+Xu0 in  n01 VPWR VGND buf
+Xu1 n01 n12 VPWR VGND buf
+Xu2 n12 out VPWR VGND buf
+.ends
