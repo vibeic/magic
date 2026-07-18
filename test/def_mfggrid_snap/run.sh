@@ -83,10 +83,9 @@ check() {   # $1 = tag, $2 = got, $3 = expected
 
 # ---- 1. the internal unit must be what the hand-computation assumes --------
 upi="$(scale)"
-case "$upi" in
-    0.0005*) : ;;
-    *) fail "internal unit changed ($upi != 0.0005 um); hand-computed grid g=10 no longer holds" ;;
-esac
+near() { awk -v a="$1" -v b="$2" 'BEGIN{d=a-b; if(d<0)d=-d; exit !(d < b*1e-6)}'; }
+near "$upi" 0.0005 \
+    || fail "internal unit changed ($upi != 0.0005 um); hand-computed grid g=10 no longer holds"
 echo "internal unit = $upi um  =>  manufacturing grid = 0.005/0.0005 = 10 internal units"
 
 # ---- 2. POSITIVE: off-grid placements snap to the EXACT expected multiple ---
