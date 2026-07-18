@@ -46,6 +46,11 @@ class Metal:
     gds_dt: int = 0       # GDS datatype      (foundry map or 0 fallback)
     width: int = 2        # a nominal DRC width rule
     from_map: bool = False  # True if gds_layer/dt came from a foundry layer-map
+    # Extraction data straight off the tech-LEF (roadmap #32).  None = the LEF
+    # did not declare it; see derive_extract_coeffs() for the unit conversion.
+    rpersq: "float | None" = None    # LEF RESISTANCE RPERSQ      [ohm/square]
+    cpersqdist: "float | None" = None  # LEF CAPACITANCE CPERSQDIST [pF/um^2]
+    edgecap: "float | None" = None   # LEF EDGECAPACITANCE        [pF/um]
 
 
 @dataclass
@@ -57,6 +62,7 @@ class Cut:
     gds_layer: int = 0
     gds_dt: int = 0
     from_map: bool = False
+    resistance: "float | None" = None  # LEF RESISTANCE <ohms per cut>  [ohm]
 
 
 def _aliases(name: str) -> List[str]:
@@ -166,6 +172,48 @@ def apply_layermap(metals: List[Metal], cuts: List[Cut],
     return n
 
 
+def derive_extract_coeffs(metals: List[Metal], cuts: List[Cut]) -> "tuple[list, list]":
+    """Convert tech-LEF electrical data into Magic extract-section coefficients.
+
+    Roadmap #32: with no native Magic `.tech`, extraction previously fell back
+    to zero coefficients, so every parasitic came out 0 -- a silent, plausible
+    wrong answer. A tech-LEF that declares its layer electricals carries enough
+    to derive real ones.
+
+    THE UNIT CHAIN (this is what makes the result hand-checkable). The emitted
+    cifoutput scale is `1 nanometers`, and Magic counts extraction area and
+    perimeter in that same output unit, so Magic's coefficients here are
+    "per nm" / "per nm^2":
+
+      areacap  [aF/nm^2] = CPERSQDIST [pF/um^2]
+            1 pF/um^2 = 1e6 aF / 1e6 nm^2 = 1 aF/nm^2   -> numerically EQUAL
+      perimc   [aF/nm]   = EDGECAPACITANCE [pF/um] * 1000
+            1 pF/um   = 1e6 aF / 1e3 nm   = 1000 aF/nm
+      resist   [mohm/sq] = RESISTANCE RPERSQ [ohm/sq] * 1000
+      contact  [mohm]    = cut RESISTANCE [ohm] * 1000
+
+    Returns (found, missing): `found` is a list of emitted description strings,
+    `missing` names every layer whose electricals the LEF did not declare.
+    """
+    found, missing = [], []
+    for m in metals:
+        if m.cpersqdist is None and m.rpersq is None and m.edgecap is None:
+            missing.append(m.mtype)
+            continue
+        if m.cpersqdist is not None:
+            found.append(f"{m.mtype} areacap={m.cpersqdist:g} aF/nm^2")
+        if m.rpersq is not None:
+            found.append(f"{m.mtype} resist={m.rpersq * 1000:g} mohm/sq")
+        if m.edgecap is not None:
+            found.append(f"{m.mtype} perimc={m.edgecap * 1000:g} aF/nm")
+    for c in cuts:
+        if c.resistance is None:
+            missing.append(c.ctype)
+        else:
+            found.append(f"{c.ctype} contact={c.resistance * 1000:g} mohm")
+    return found, missing
+
+
 def parse_tech_lef(text: str) -> "tuple[List[Metal], List[Cut]]":
     """Derive the ordered routing/cut stack from a tech-LEF's layer set.
 
@@ -177,33 +225,57 @@ def parse_tech_lef(text: str) -> "tuple[List[Metal], List[Cut]]":
     metals: List[Metal] = []
     cuts_raw: List[str] = []
     order: List[tuple] = []  # (kind, name) in LEF file order
+    rc: dict = {}            # layer name -> extraction data found on it (#32)
     layer = None
     ltype = None
+    cur: dict = {}
     for line in text.splitlines():
         s = line.strip()
         m = re.match(r"^LAYER\s+(\S+)", s)
         if m:
             layer = m.group(1)
             ltype = None
+            cur = {}
             continue
         if layer is not None:
             tm = re.match(r"^TYPE\s+(\w+)", s)
             if tm:
                 ltype = tm.group(1).upper()
+            # roadmap #32: the electrical data a tech-LEF may carry per layer.
+            em = re.match(r"^RESISTANCE\s+RPERSQ\s+([-+0-9.eE]+)", s)
+            if em:
+                cur["rpersq"] = float(em.group(1))
+            em = re.match(r"^CAPACITANCE\s+CPERSQDIST\s+([-+0-9.eE]+)", s)
+            if em:
+                cur["cpersqdist"] = float(em.group(1))
+            em = re.match(r"^EDGECAPACITANCE\s+([-+0-9.eE]+)", s)
+            if em:
+                cur["edgecap"] = float(em.group(1))
+            # a CUT layer spells its via resistance as a bare RESISTANCE
+            em = re.match(r"^RESISTANCE\s+([-+0-9.eE]+)", s)
+            if em:
+                cur["resistance"] = float(em.group(1))
             if s.startswith("END") and layer in s:
                 if ltype == "ROUTING":
                     order.append(("routing", layer))
+                    rc[layer] = cur
                 elif ltype == "CUT":
                     order.append(("cut", layer))
+                    rc[layer] = cur
                 layer = None
                 ltype = None
+                cur = {}
     gds = 60
     metal_idx: List[int] = []  # position in `order` of each metal (unused)
     ri = 0
     for kind, name in order:
         if kind == "routing":
+            d = rc.get(name, {})
             metals.append(Metal(mtype=name, plane=f"PL_{name}",
-                                 lef_names=_aliases(name), gds_layer=gds))
+                                 lef_names=_aliases(name), gds_layer=gds,
+                                 rpersq=d.get("rpersq"),
+                                 cpersqdist=d.get("cpersqdist"),
+                                 edgecap=d.get("edgecap")))
             gds += 1
             ri += 1
         else:
@@ -217,7 +289,8 @@ def parse_tech_lef(text: str) -> "tuple[List[Metal], List[Cut]]":
         if hi >= len(metals):
             hi = len(metals) - 1
         cuts.append(Cut(ctype=name, lef_names=_aliases(name),
-                        lower=lo, upper=hi, gds_layer=gdsc))
+                        lower=lo, upper=hi, gds_layer=gdsc,
+                        resistance=rc.get(name, {}).get("resistance")))
         gdsc += 1
     return metals, cuts
 
@@ -321,11 +394,18 @@ def build_tech(metals: List[Metal], cuts: List[Cut], name: str = "bridge",
     L.append("  lambda 0.005")
     L.append("  step 100")
     L.append("  sidehalo 0")
+    # roadmap #32: emit coefficients DERIVED from the tech-LEF where it declares
+    # them; fall back to 0 (and warn) only for a layer the LEF left silent.
     for m in metals:
-        L.append(f"  areacap {m.mtype} 0")
-        L.append(f"  resist {m.mtype} 0 0")
+        ac = m.cpersqdist if m.cpersqdist is not None else 0
+        rs = m.rpersq * 1000 if m.rpersq is not None else 0
+        L.append(f"  areacap {m.mtype} {ac:g}")
+        L.append(f"  resist {m.mtype} {rs:g} 0")
+        if m.edgecap is not None:
+            L.append(f"  perimc {m.mtype} space {m.edgecap * 1000:g}")
     for c in cuts:
-        L.append(f"  contact {c.ctype} 0")
+        ct = c.resistance * 1000 if c.resistance is not None else 0
+        L.append(f"  contact {c.ctype} {ct:g}")
     L.append("end")
     L.append("")
     L.append("drc")
@@ -350,6 +430,11 @@ def main(argv=None) -> int:
     ap.add_argument("--drop-contacts", action="store_true",
                     help="negative variant: omit the via contact rules")
     ap.add_argument("-o", "--out", help="output tech path (default stdout)")
+    ap.add_argument("--require-rc", action="store_true",
+                    help="roadmap #32: FAIL if the tech-LEF does not declare "
+                         "the extraction electricals (RESISTANCE RPERSQ / "
+                         "CAPACITANCE CPERSQDIST / EDGECAPACITANCE) for every "
+                         "layer, instead of falling back to zero coefficients")
     args = ap.parse_args(argv)
 
     if args.metals:
@@ -379,6 +464,23 @@ def main(argv=None) -> int:
             sys.stderr.write(
                 "[gen_bridge_tech] no foundry layer-map found; "
                 "compact GDS fallback (Magic-written GDS not foundry-canonical)\n")
+
+    # Extraction coefficients derived from the tech-LEF (roadmap #32).  A layer
+    # the LEF left silent still falls back to 0, but NEVER silently: it is named
+    # on stderr, and --require-rc turns the gap into a hard failure so a caller
+    # that needs real parasitics cannot be handed a fabricated zero-C tech.
+    found, missing = derive_extract_coeffs(mets, cuts)
+    if found:
+        sys.stderr.write("[gen_bridge_tech] extraction coefficients derived "
+                         "from the tech-LEF: " + "; ".join(found) + "\n")
+    if missing:
+        msg = ("tech-LEF declares no extraction electricals for: "
+               + ", ".join(missing)
+               + " -- parasitics on those layers extract as ZERO")
+        if args.require_rc:
+            sys.stderr.write(f"[gen_bridge_tech] ERROR: {msg}\n")
+            return 3
+        sys.stderr.write(f"[gen_bridge_tech] WARNING: {msg}\n")
 
     tech = build_tech(mets, cuts, name=args.name,
                       drop_contacts=args.drop_contacts)
