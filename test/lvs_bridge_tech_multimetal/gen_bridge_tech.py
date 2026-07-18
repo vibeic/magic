@@ -29,10 +29,12 @@ defined but the via bridges gone, a cross-metal net MUST fragment.
 from __future__ import annotations
 
 import argparse
+import glob
+import os
 import re
 import sys
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -40,8 +42,10 @@ class Metal:
     mtype: str            # Magic type name, e.g. "met1"
     plane: str            # Magic plane name, e.g. "PL_met1"
     lef_names: List[str]  # LEF routing layer aliases
-    gds_layer: int = 0    # nominal (cifio only; unused by def-read extraction)
+    gds_layer: int = 0    # GDS layer number  (foundry map or compact fallback)
+    gds_dt: int = 0       # GDS datatype      (foundry map or 0 fallback)
     width: int = 2        # a nominal DRC width rule
+    from_map: bool = False  # True if gds_layer/dt came from a foundry layer-map
 
 
 @dataclass
@@ -51,6 +55,8 @@ class Cut:
     lower: int = 0        # index into metals (lower plate)
     upper: int = 1        # index into metals (upper plate)
     gds_layer: int = 0
+    gds_dt: int = 0
+    from_map: bool = False
 
 
 def _aliases(name: str) -> List[str]:
@@ -60,6 +66,104 @@ def _aliases(name: str) -> List[str]:
         if cand not in out:
             out.append(cand)
     return out
+
+
+# --- foundry LEF/DEF layer-map auto-discovery + apply (roadmap #46, P0) -------
+#
+# Without the foundry map, a no-native-tech PDK's bridge tech falls back to a
+# COMPACT 1..N GDS numbering (met1=60/0, met2=61/0, ...). Magic then writes GDS
+# on those compact numbers and reads GDS assuming them, so a real foundry GDS
+# (met1=68/20, ...) round-trips to NOTHING: top routing + pin labels vanish and
+# LVS loses every anchor. The foundry ships a layer-map file (name -> GDS
+# layer/datatype); discover it and thread the real numbers into cifinput (read)
+# AND cifoutput `calma` (write) so Magic-written GDS is foundry-canonical and
+# a foundry GDS reads back with full connectivity.
+
+def parse_layermap(text: str) -> Dict[str, Tuple[int, int]]:
+    """Parse a foundry layer-map into {name[:purpose] -> (gdsLayer, gdsDt)}.
+
+    Accepts the common whitespace forms shipped by foundries / OpenLane /
+    Cadence / Calibre:
+
+        met1 drawing 68 20      # <name> <purpose> <gdsLayer> <gdsDatatype>
+        met1 68 20              # <name> <gdsLayer> <gdsDatatype>
+        met1 68/20              # <name> <gdsLayer>/<gdsDatatype>
+
+    The unqualified `name` key resolves to the `drawing` purpose when present,
+    else the first row seen for that name.
+    """
+    out: Dict[str, Tuple[int, int]] = {}
+    for line in text.splitlines():
+        s = line.split("#", 1)[0].split(";", 1)[0].strip()
+        if not s:
+            continue
+        toks = s.replace("/", " ").split()
+        name = toks[0]
+        purpose = "drawing"
+        nums: List[str] = []
+        rest = toks[1:]
+        if rest and not re.fullmatch(r"-?\d+", rest[0]):
+            purpose = rest[0]
+            rest = rest[1:]
+        nums = [t for t in rest if re.fullmatch(r"-?\d+", t)]
+        if len(nums) < 2:
+            continue
+        try:
+            num, dt = int(nums[0]), int(nums[1])
+        except ValueError:
+            continue
+        out[f"{name.lower()}:{purpose.lower()}"] = (num, dt)
+        out.setdefault(name.lower(), (num, dt))
+    return out
+
+
+def resolve_ld(m: Dict[str, Tuple[int, int]],
+               names: List[str]) -> Optional[Tuple[int, int]]:
+    """Look a Magic type's LEF aliases up in the parsed layer-map."""
+    for n in names:
+        for key in (f"{n.lower()}:drawing", n.lower()):
+            if key in m:
+                return m[key]
+    return None
+
+
+def discover_layermap(lef_path: Optional[str],
+                      explicit: Optional[str]) -> Optional[str]:
+    """Locate the foundry layer-map: explicit path wins, else auto-discover a
+    `*.layermap` / `*.map` sitting next to the tech-LEF (the way a PDK ships
+    one map both the streamout tool and the DRC/LVS deck consume)."""
+    if explicit:
+        return explicit if os.path.exists(explicit) else None
+    if not lef_path:
+        return None
+    d = os.path.dirname(os.path.abspath(lef_path)) or "."
+    base = os.path.splitext(os.path.basename(lef_path))[0]
+    # Prefer a map that shares the LEF basename, then any single map in the dir.
+    ordered: List[str] = []
+    for pat in (f"{base}.layermap", f"{base}.map",
+                "*.layermap", "*.map"):
+        for hit in sorted(glob.glob(os.path.join(d, pat))):
+            if hit not in ordered:
+                ordered.append(hit)
+    return ordered[0] if ordered else None
+
+
+def apply_layermap(metals: List[Metal], cuts: List[Cut],
+                   lmap: Dict[str, Tuple[int, int]]) -> int:
+    """Override compact GDS numbers with foundry map values. Returns the count
+    of layers resolved from the map (0 => stays on the compact fallback)."""
+    n = 0
+    for m in metals:
+        ld = resolve_ld(lmap, m.lef_names)
+        if ld is not None:
+            m.gds_layer, m.gds_dt, m.from_map = ld[0], ld[1], True
+            n += 1
+    for c in cuts:
+        ld = resolve_ld(lmap, c.lef_names)
+        if ld is not None:
+            c.gds_layer, c.gds_dt, c.from_map = ld[0], ld[1], True
+            n += 1
+    return n
 
 
 def parse_tech_lef(text: str) -> "tuple[List[Metal], List[Cut]]":
@@ -176,18 +280,32 @@ def build_tech(metals: List[Metal], cuts: List[Cut], name: str = "bridge",
     for m in metals:
         L.append(f"  layer o_{m.mtype} {m.mtype}")
         L.append(f"    labels {m.mtype} port")
+        # `calma` fixes the GDS layer/datatype at streamout. Foundry map when
+        # discovered, else the compact fallback -- either way EXPLICIT, so a
+        # Magic-written GDS is round-trippable (roadmap #38/#46).
+        L.append(f"    calma {m.gds_layer} {m.gds_dt}")
     for c in cuts:
         L.append(f"  layer o_{c.ctype} {c.ctype}")
+        L.append(f"    calma {c.gds_layer} {c.gds_dt}")
     L.append("end")
     L.append("")
     L.append("cifinput")
     L.append("  style drc")
     L.append("  scalefactor 1 nanometers")
+    # A cif-READ layer maps GDS layer/datatype -> a Magic paint type. The read
+    # grammar is `layer <magicType> <cifReadLayer>` + `calma <cifReadLayer>
+    # <gdsLayer> <gdsDatatype>` (NOT `layer met1 68/20`). Foundry map when
+    # discovered, else compact fallback -- so a foundry GDS reads back with the
+    # routing + labels landing on the right types (roadmap #46).
     for m in metals:
-        L.append(f"  layer {m.mtype} {m.gds_layer}/0")
-        L.append(f"    labels {m.gds_layer}/0")
+        cl = f"c_{m.mtype}"
+        L.append(f"  layer {m.mtype} {cl}")
+        L.append(f"    labels {cl} port")
+        L.append(f"    calma {cl} {m.gds_layer} {m.gds_dt}")
     for c in cuts:
-        L.append(f"  layer {c.ctype} {c.gds_layer}/0")
+        cl = f"c_{c.ctype}"
+        L.append(f"  layer {c.ctype} {cl}")
+        L.append(f"    calma {cl} {c.gds_layer} {c.gds_dt}")
     L.append("end")
     L.append("")
     L.append("lef")
@@ -224,6 +342,11 @@ def main(argv=None) -> int:
                     "(overrides --lef)")
     ap.add_argument("--cuts", help="comma list of cut/via layer names")
     ap.add_argument("--name", default="bridge")
+    ap.add_argument("--layermap", help="foundry GDS layer-map "
+                    "(<name> [purpose] <gdsLayer> <gdsDatatype>); when omitted "
+                    "a *.layermap/*.map next to --lef is auto-discovered")
+    ap.add_argument("--no-layermap", action="store_true",
+                    help="disable layer-map discovery, force compact fallback")
     ap.add_argument("--drop-contacts", action="store_true",
                     help="negative variant: omit the via contact rules")
     ap.add_argument("-o", "--out", help="output tech path (default stdout)")
@@ -242,6 +365,21 @@ def main(argv=None) -> int:
     else:
         ap.error("need --lef or --metals")
         return 2
+
+    # Foundry LEF/DEF layer-map auto-discovery + apply (roadmap #46, P0).
+    if not args.no_layermap:
+        mpath = discover_layermap(args.lef, args.layermap)
+        if mpath:
+            nresolved = apply_layermap(mets, cuts, parse_layermap(open(mpath).read()))
+            sys.stderr.write(
+                f"[gen_bridge_tech] foundry layer-map {mpath}: "
+                f"{nresolved}/{len(mets) + len(cuts)} layers mapped to "
+                f"foundry GDS numbers\n")
+        else:
+            sys.stderr.write(
+                "[gen_bridge_tech] no foundry layer-map found; "
+                "compact GDS fallback (Magic-written GDS not foundry-canonical)\n")
+
     tech = build_tech(mets, cuts, name=args.name,
                       drop_contacts=args.drop_contacts)
     if args.out:

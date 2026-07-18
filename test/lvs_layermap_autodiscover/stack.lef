@@ -1,0 +1,58 @@
+VERSION 5.8 ;
+BUSBITCHARS "[]" ;
+DIVIDERCHAR "/" ;
+UNITS
+  DATABASE MICRONS 1000 ;
+END UNITS
+MANUFACTURINGGRID 0.005 ;
+
+LAYER met1
+  TYPE ROUTING ;
+  DIRECTION HORIZONTAL ;
+  WIDTH 0.14 ;
+  PITCH 0.28 ;
+END met1
+
+LAYER via1
+  TYPE CUT ;
+  WIDTH 0.14 ;
+END via1
+
+LAYER met2
+  TYPE ROUTING ;
+  DIRECTION VERTICAL ;
+  WIDTH 0.14 ;
+  PITCH 0.28 ;
+END met2
+
+LAYER via2
+  TYPE CUT ;
+  WIDTH 0.14 ;
+END via2
+
+LAYER met3
+  TYPE ROUTING ;
+  DIRECTION HORIZONTAL ;
+  WIDTH 0.14 ;
+  PITCH 0.28 ;
+END met3
+
+VIA via1_default DEFAULT
+  LAYER met1 ;
+    RECT -0.07 -0.07 0.07 0.07 ;
+  LAYER via1 ;
+    RECT -0.07 -0.07 0.07 0.07 ;
+  LAYER met2 ;
+    RECT -0.07 -0.07 0.07 0.07 ;
+END via1_default
+
+VIA via2_default DEFAULT
+  LAYER met2 ;
+    RECT -0.07 -0.07 0.07 0.07 ;
+  LAYER via2 ;
+    RECT -0.07 -0.07 0.07 0.07 ;
+  LAYER met3 ;
+    RECT -0.07 -0.07 0.07 0.07 ;
+END via2_default
+
+END LIBRARY
