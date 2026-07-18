@@ -1,0 +1,39 @@
+VERSION 5.8 ;
+DIVIDERCHAR "/" ;
+BUSBITCHARS "[]" ;
+DESIGN tinytop ;
+UNITS DISTANCE MICRONS 1000 ;
+DIEAREA ( 0 0 ) ( 26000 6000 ) ;
+
+COMPONENTS 3 ;
+- u0 buf + PLACED ( 2000 2000 ) N ;
+- u1 buf + PLACED ( 10000 2000 ) N ;
+- u2 buf + PLACED ( 18000 2000 ) N ;
+END COMPONENTS
+
+PINS 2 ;
+- in + NET n_in + DIRECTION INPUT + USE SIGNAL
+  + LAYER met1 ( -140 -150 ) ( 140 150 ) + PLACED ( 700 3350 ) N ;
+- out + NET n_out + DIRECTION OUTPUT + USE SIGNAL
+  + LAYER met1 ( -140 -150 ) ( 140 150 ) + PLACED ( 25300 3350 ) N ;
+END PINS
+
+NETS 4 ;
+- n_in ( PIN in ) ( u0 A )
+  + ROUTED met1 ( 700 3350 ) ( 2550 3350 ) ;
+- n01 ( u0 Z ) ( u1 A )
+  + ROUTED met1 ( 6450 3350 ) ( 10550 3350 ) ;
+- n12 ( u1 Z ) ( u2 A )
+  + ROUTED met1 ( 14450 3350 ) ( 18550 3350 ) ;
+- n_out ( u2 Z ) ( PIN out )
+  + ROUTED met1 ( 22450 3350 ) ( 25300 3350 ) ;
+END NETS
+
+SPECIALNETS 2 ;
+- VPWR ( * VPWR )
+  + ROUTED met1 300 ( 0 4570 ) ( 26000 4570 ) ;
+- VGND ( * VGND )
+  + ROUTED met1 300 ( 0 2150 ) ( 26000 2150 ) ;
+END SPECIALNETS
+
+END DESIGN

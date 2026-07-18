@@ -44,6 +44,78 @@ static const char rcsid[] __attribute__ ((unused)) = "$Header: /usr/cvsroot/magi
 /*
  *------------------------------------------------------------
  *
+ * defNonzeroRouteWidth --
+ *
+ *	vibeic LVS-fidelity fix.  Guarantee a non-zero DEF route width.
+ *
+ *	A DEF regular/special net route wire is painted with the routing
+ *	layer's width.  When that width resolves to ZERO -- which happens
+ *	whenever the routing layer carries no LEF `WIDTH` (e.g. the design's
+ *	tech-LEF was never read, so the layer is known from the techfile
+ *	`lef` section but `info.route.width` stayed 0) and no DRC `width`
+ *	rule is loaded -- the wire is built as a zero-width, i.e. EMPTY,
+ *	rectangle (see the `r_ybot -= paintWidth; r_ytop += paintWidth`
+ *	segment-width sites below: paintWidth 0 leaves a degenerate line).
+ *	Magic then silently drops every such wire, so the top-level
+ *	extraction loses ALL routed connectivity: signal nets fragment into
+ *	isolated per-pin nodes (or collapse to a single node), power survives
+ *	only because it is name-anchored, and a subsequent LVS necessarily
+ *	MISMATCHES.  This was the "LEF-abstract top-level extraction collapses
+ *	the nets" residual: the abstract-cell ports DO register (they have
+ *	their LEF pin paint + port labels) -- they simply had a zero-width,
+ *	unpainted wire to connect to.
+ *
+ *	This is the routing-geometry analog of the unknown-layer route
+ *	retention (DefAddRoutes below) and the CalmaRdpt.c / DEF-pin font
+ *	width-0 guards already in this fork: never silently drop geometry to
+ *	a zero dimension.  A minimal non-zero width preserves the wire's
+ *	centerline connectivity (the router routes a wire's centerline
+ *	through each pin's access point, so even a 1-unit wire overlaps the
+ *	pins it connects) while staying too narrow to bridge neighbouring
+ *	nets, so no false shorts are introduced.
+ *
+ *	Preference order for the fallback: the DEFAULT_WIDTH expression the
+ *	reader already uses (and trusts, in the same paintWidth units) when
+ *	the layer is entirely unknown, floored at 1.  Warns once per route
+ *	statement so the substitution is never silent.
+ *
+ * Results:
+ *	A strictly-positive width in the same units as the input.
+ *
+ * Side Effects:
+ *	Emits one DEF_WARNING the first time it substitutes (*warned toggled).
+ *------------------------------------------------------------
+ */
+
+static int
+defNonzeroRouteWidth(
+    int width,		/* the width just resolved by the caller */
+    bool *warned)	/* one-shot warn latch (may be NULL) */
+{
+    int w;
+
+    if (width > 0) return width;
+
+    /* Same fallback the reader already uses for a fully-unknown layer,	*/
+    /* so it is guaranteed to be in the correct paintWidth units.	*/
+    w = DEFAULT_WIDTH * DBLambda[1] / DBLambda[0];
+    if (w <= 0) w = 1;
+
+    if ((warned != NULL) && (*warned == FALSE))
+    {
+	LefError(DEF_WARNING, "Route layer has no resolvable width (no LEF "
+		"WIDTH and no DRC width rule); painting routed geometry at a "
+		"fallback width of %d internal units instead of a zero-width "
+		"(dropped) wire, so per-net connectivity is retained for "
+		"extraction/LVS.\n", w);
+	*warned = TRUE;
+    }
+    return w;
+}
+
+/*
+ *------------------------------------------------------------
+ *
  * DefAddRoutes --
  *
  *	Parse a network route statement from the DEF file,
@@ -168,6 +240,7 @@ DefAddRoutes(
     lefLayer *lefl = NULL;
     lefRule *rule = NULL;
     int keyword;
+    bool zeroWidthWarned = FALSE;	/* vibeic: one-shot zero-width warn latch */
 
     static const char * const specnet_keys[] = {
 	"SHAPE",
@@ -280,6 +353,8 @@ DefAddRoutes(
 		else
 		    paintWidth = (lefl) ? lefl->info.route.width :
 				DEFAULT_WIDTH * DBLambda[1] / DBLambda[0];
+		/* vibeic: never let a 0 width paint an empty (dropped) wire */
+		paintWidth = defNonzeroRouteWidth(paintWidth, &zeroWidthWarned);
 		paintExtend = 0;	/* SPECIALNETS always have 0 wire extension */
 		saveWidth = paintWidth;
 	    }
@@ -297,6 +372,8 @@ DefAddRoutes(
 		paintWidth = (rule) ? rule->width :
 				(lefl) ? lefl->info.route.width :
 				DEFAULT_WIDTH * DBLambda[1] / DBLambda[0];
+		/* vibeic: never let a 0 width paint an empty (dropped) wire */
+		paintWidth = defNonzeroRouteWidth(paintWidth, &zeroWidthWarned);
 		paintExtend = (rule) ? rule->width : paintWidth;
 	    }
 	}
@@ -448,6 +525,8 @@ DefAddRoutes(
 	    /* Return to the default width for this layer */
 	    paintWidth = (lefl) ? lefl->info.route.width :
 				DEFAULT_WIDTH * DBLambda[1] / DBLambda[0];
+	    /* vibeic: never let a 0 width paint an empty (dropped) wire */
+	    paintWidth = defNonzeroRouteWidth(paintWidth, &zeroWidthWarned);
 	    paintExtend = (special) ? 0 : paintWidth;
 	}
 	else if (!strcmp(token, "TAPERRULE"))
@@ -472,6 +551,8 @@ DefAddRoutes(
 	    {
 	    	paintWidth = (lefl) ? lefl->info.route.width :
 				DEFAULT_WIDTH * DBLambda[1] / DBLambda[0];
+		/* vibeic: never let a 0 width paint an empty (dropped) wire */
+		paintWidth = defNonzeroRouteWidth(paintWidth, &zeroWidthWarned);
 		paintExtend = (special) ? 0 : paintWidth;
 	    }
 	    else
@@ -603,6 +684,9 @@ DefAddRoutes(
 					(lefl) ? lefl->info.route.width :
 					DEFAULT_WIDTH * DBLambda[1] / DBLambda[0];
 
+				/* vibeic: never paint an empty (dropped) wire */
+				paintWidth = defNonzeroRouteWidth(paintWidth,
+					&zeroWidthWarned);
 				paintExtend = (special) ? 0 : paintWidth;
 				break;
 			    }
