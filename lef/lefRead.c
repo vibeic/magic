@@ -58,6 +58,14 @@ static const char rcsid[] __attribute__ ((unused)) = "$Header: /usr/cvsroot/magi
 /* Current line number for reading */
 int lefCurrentLine;
 
+/* vibeic fork (grid fidelity, roadmap #47/#37): the MANUFACTURINGGRID value	*/
+/* (in microns) parsed from the most-recently-read tech-LEF.  Stock magic	*/
+/* discards this token entirely; we retain it so the DEF importer can snap	*/
+/* off-grid instance placements to the foundry manufacturing grid, and the	*/
+/* streamout path can snap off-grid vertices.  0.0 means "no grid known /	*/
+/* do not snap" (the pre-fork behaviour).					*/
+float LefManufacturingGrid = 0.0;
+
 /* Cell reading hash tables */
 HashTable LefCellTable;
 HashTable lefDefInitHash;
@@ -3040,8 +3048,20 @@ LefRead(
 	    case LEF_BUSBITCHARS:
 	    case LEF_DIVIDERCHAR:
 	    case LEF_CLEARANCEMEASURE:
-	    case LEF_MANUFACTURINGGRID:
 	    case LEF_USEMINSPACING:
+		LefEndStatement(f);
+		break;
+	    case LEF_MANUFACTURINGGRID:
+		/* vibeic fork (roadmap #47/#37): retain the manufacturing grid	*/
+		/* (microns) instead of discarding it, so the DEF importer and	*/
+		/* GDS streamout can snap to it.  Stock magic dropped this token.*/
+		token = LefNextToken(f, TRUE);
+		if (token != NULL)
+		{
+		    float mfg = 0.0;
+		    if ((sscanf(token, "%f", &mfg) == 1) && (mfg > 0.0))
+			LefManufacturingGrid = mfg;
+		}
 		LefEndStatement(f);
 		break;
 	    case LEF_NAMESCASESENSITIVE:

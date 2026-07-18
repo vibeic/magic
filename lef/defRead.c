@@ -44,6 +44,68 @@ static const char rcsid[] __attribute__ ((unused)) = "$Header: /usr/cvsroot/magi
 /*
  *------------------------------------------------------------
  *
+ * defSnapToMfgGrid --
+ *
+ *	vibeic fork (grid fidelity, roadmap #47): snap a coordinate,
+ *	expressed in magic internal database units, to the foundry
+ *	MANUFACTURINGGRID retained from the tech-LEF (LefManufacturingGrid,
+ *	microns).  Stock magic enforces only the DEF database-unit (DBU)
+ *	grid when converting a placement coordinate, so an instance placed
+ *	at a coordinate that is a whole number of DBU but NOT a multiple of
+ *	the (coarser) manufacturing grid survives as an off-grid placement.
+ *	Real routed DEF is on the manufacturing grid, but off-grid instance
+ *	*transforms* (e.g. a macro whose own origin sits at a fractional
+ *	grid, or a hand-perturbed placement) then radiate off-grid vertices
+ *	into every child shape at streamout -- the "76% OFFGRID" symptom.
+ *
+ *	The manufacturing grid in internal units is
+ *	    g = LefManufacturingGrid / CIFGetOutputScale(1000)
+ *	because CIFGetOutputScale(1000) is exactly microns-per-internal-unit
+ *	for the loaded techfile.  We snap only when that resolves to an
+ *	integer number (>= 2) of internal units, i.e. when magic's own DB
+ *	resolution is FINER than the manufacturing grid so an off-grid
+ *	placement is actually representable; when the grid is <= 1 internal
+ *	unit every integer coordinate is already legal and we leave it
+ *	untouched.  With LefManufacturingGrid == 0 (no tech-LEF grid known)
+ *	this is a no-op, preserving the exact stock behaviour.
+ *
+ * Results:
+ *	The coordinate snapped to the nearest manufacturing-grid multiple,
+ *	or unchanged if no snap applies.
+ *
+ * Side Effects:
+ *	None.
+ *
+ *------------------------------------------------------------
+ */
+
+int
+defSnapToMfgGrid(
+    int coord)		/* coordinate in magic internal units */
+{
+    double upu, gmag;
+    long g;
+
+    if (LefManufacturingGrid <= 0.0) return coord;
+
+    upu = (double)CIFGetOutputScale(1000);	/* microns per internal unit */
+    if (upu <= 0.0) return coord;
+
+    gmag = (double)LefManufacturingGrid / upu;	/* grid in internal units */
+    g = lround(gmag);
+
+    /* Only snap when the grid is an integer multiple (>= 2) of the internal
+     * unit; otherwise the internal DB is as coarse as (or coarser than) the
+     * manufacturing grid and every coordinate is already legal.
+     */
+    if ((g < 2) || (fabs(gmag - (double)g) > 1.0e-3)) return coord;
+
+    return (int)(lround((double)coord / (double)g) * g);
+}
+
+/*
+ *------------------------------------------------------------
+ *
  * defNonzeroRouteWidth --
  *
  *	vibeic LVS-fidelity fix.  Guarantee a non-zero DEF route width.
@@ -1634,7 +1696,10 @@ DefReadLocation(
     }
     GeoTransRect(tptr, r, &tr);
     GeoTranslateTrans(tptr, -tr.r_xbot, -tr.r_ybot, &t2);
-    GeoTranslateTrans(&t2, (int)roundf(x / oscale), (int)roundf(y / oscale), tptr);
+    /* vibeic fork (roadmap #47): snap the instance placement point to the	*/
+    /* foundry MANUFACTURINGGRID (no-op when no tech-LEF grid is known).	*/
+    GeoTranslateTrans(&t2, defSnapToMfgGrid((int)roundf(x / oscale)),
+		defSnapToMfgGrid((int)roundf(y / oscale)), tptr);
     if (use)
 	DBSetTrans(use, tptr);
     return 0;
