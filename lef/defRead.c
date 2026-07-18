@@ -1062,7 +1062,13 @@ DefReadNonDefaultRules(
     float fvalue;
     LefRules *ruleset = NULL;
     lefRule *rule = NULL;
-    bool inlayer;
+    /* vibeic fork (roadmap #48): "inlayer" was read by the property loop
+     * below before anything had ever assigned it, so the first rule in a
+     * NONDEFAULTRULES section branched on an indeterminate value (and every
+     * later rule inherited the previous rule's state).  Start out "not in a
+     * LAYER clause", which is what the loop's own '+' handling assumes.
+     */
+    bool inlayer = FALSE;
 
     static const char * const nondef_keys[] = {
 	"-",
@@ -2265,6 +2271,19 @@ DefReadVias(
 
 		/* If not otherwise specified, rows and columns default to 1 */
 		rows = cols = 1;
+
+		/* vibeic fork (roadmap #48): reset the by-rule ("generated")	*/
+		/* state for EVERY via.  "generated" is function-scope and was	*/
+		/* only ever set TRUE, never cleared, so once one via in the	*/
+		/* VIAS section was declared by rule (CUTSIZE/LAYERS/CUTSPACING/	*/
+		/* ENCLOSURE/ROWCOL), every LATER via -- including plain RECT	*/
+		/* composite vias -- also took the generated path at its ';' and	*/
+		/* was rebuilt by LefGenViaGeometry() from the PREVIOUS via's	*/
+		/* stale cut/enclosure/rowcol values, overwriting the geometry	*/
+		/* the DEF actually declared.  A DEF that mixes router-generated	*/
+		/* NDR vias with RECT vias (the OpenROAD CTS case) therefore	*/
+		/* imported wrong via geometry for the RECT vias.		*/
+		generated = FALSE;
 
 		/* Get via name */
 		token = LefNextToken(f, TRUE);
