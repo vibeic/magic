@@ -179,6 +179,7 @@ typedef struct {
 #define	HSPICE	2
 #define	NGSPICE	3
 #define	CDL	4
+#define	SPEF	5	/* vibeic fork (roadmap #28): SPEF parasitic exchange */
 
 #define AUTO	2	/* TRUE | FALSE | AUTO for esDoSubckt */
 

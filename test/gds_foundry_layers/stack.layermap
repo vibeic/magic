@@ -1,0 +1,13 @@
+# stack.layermap - synthetic FOUNDRY GDS layer map (NDA-clean, generic names).
+#
+# Standard foundry layer-map form:  <layerName> <purpose> <gdsLayer> <gdsDatatype>
+# The numbers are deliberately NON-COMPACT and use NON-ZERO datatypes, so a
+# compact 1..N / datatype-0 fallback can never coincidentally match them.
+# This is the single source of truth for both the foundry GDS fixture and the
+# Magic bridge tech, mirroring how a real PDK ships one map both tools consume.
+#
+met1  drawing  68  20
+met2  drawing  69  20
+met3  drawing  70  20
+via1  drawing  66  44
+via2  drawing  67  44

@@ -1,0 +1,3 @@
+* golden: the foundry GDS has two anchored top nets IN (met1 stack) and OUT (met3 stack)
+.subckt TOP IN OUT
+.ends

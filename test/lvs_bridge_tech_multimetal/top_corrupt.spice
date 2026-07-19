@@ -1,0 +1,9 @@
+* top schematic (CORRUPTED) -- u1.Z miswired back to `in` instead of n12.
+* Proves the golden MATCH is not vacuous.
+.subckt buf A Z VPWR VGND
+.ends
+.subckt top in out VSUBS
+Xu0 in  n01 VPWR VGND buf
+Xu1 n01 in  VPWR VGND buf
+Xu2 in  out VPWR VGND buf
+.ends

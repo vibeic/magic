@@ -139,6 +139,11 @@ extern HashTable LefInfo;
 extern HashTable LefNonDefaultRules;
 extern linkedNetName *lefIgnoreNets;
 
+/* vibeic fork (roadmap #47/#37): MANUFACTURINGGRID (microns) from the last	*/
+/* tech-LEF read, or 0.0 if none.  Consumed by the DEF importer to snap		*/
+/* off-grid instance placements to the foundry manufacturing grid.		*/
+extern float LefManufacturingGrid;
+
 /* Forward declarations */
 
 extern int lefDefInitFunc(CellDef *def);

@@ -1,0 +1,50 @@
+VERSION 5.8 ;
+BUSBITCHARS "[]" ;
+DIVIDERCHAR "/" ;
+
+MACRO buf
+  CLASS CORE ;
+  ORIGIN 0 0 ;
+  SIZE 5.0 BY 2.72 ;
+  SYMMETRY X Y ;
+  SITE unithd ;
+  PIN A
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    PORT
+      LAYER met1 ;
+        RECT 0.4 1.2 0.7 1.5 ;
+    END
+  END A
+
+  PIN Z
+    DIRECTION OUTPUT ;
+    USE SIGNAL ;
+    PORT
+      LAYER met1 ;
+        RECT 4.3 1.2 4.6 1.5 ;
+    END
+  END Z
+
+  PIN VPWR
+    DIRECTION INOUT ;
+    USE POWER ;
+    SHAPE ABUTMENT ;
+    PORT
+      LAYER met1 ;
+        RECT 0 2.42 5.0 2.72 ;
+    END
+  END VPWR
+
+  PIN VGND
+    DIRECTION INOUT ;
+    USE GROUND ;
+    SHAPE ABUTMENT ;
+    PORT
+      LAYER met1 ;
+        RECT 0 0 5.0 0.30 ;
+    END
+  END VGND
+
+END buf
+END LIBRARY

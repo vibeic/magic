@@ -238,6 +238,306 @@ Exttospice_Init(
 /*
  * ----------------------------------------------------------------------------
  *
+ * vibeic fork (roadmap #28): SPEF / parasitic-exchange output.
+ *
+ * ext2spice already extracts a flat R/C network (EFVisitNodes for lumped
+ * ground caps, EFVisitCaps for coupling caps, EFVisitResists for the
+ * resistor network) and serialises it as SPICE R/C elements.  A downstream
+ * STA / PEX consumer, however, ingests the *standard* SPEF interchange
+ * format, not SPICE.  This block adds a faithful SPEF writer over the SAME
+ * extracted network so the identical parasitics ext2spice would emit as
+ * SPICE become a per-net SPEF *D_NET/*CAP/*RES description.  Selected with
+ * "ext2spice format spef"; the whole SPEF path is isolated from the SPICE
+ * emission code (a single early divergence in CmdExtToSpice), so the SPICE
+ * output is byte-for-byte unchanged.
+ *
+ * Units are exactly ext2spice's internal units: node/coupling cap arrives
+ * in attofarads (÷1000 -> fF, matching spccapVisit/spcnodeVisit), resistance
+ * arrives in milliohms (÷1000 -> ohm, matching spcresistVisit).  So the SPEF
+ * is declared *C_UNIT 1 FF / *R_UNIT 1 OHM and each value is (raw / 1000).
+ * The EFCapThreshold filter is applied identically to ext2spice so the SPEF
+ * per-net total equals what ext2spice would print for the same net.
+ *
+ * ----------------------------------------------------------------------------
+ */
+
+typedef struct spefCoupling {
+    char *other;			/* the coupled net's name		*/
+    double cap;				/* coupling cap, fF			*/
+    struct spefCoupling *next;
+} spefCoupling;
+
+typedef struct spefResEl {
+    char *t1, *t2;			/* resistor terminal node names		*/
+    double res;				/* resistance, ohm			*/
+    struct spefResEl *next;
+} spefResEl;
+
+typedef struct spefNet {
+    char *name;				/* canonical net name			*/
+    double gndCap;			/* lumped ground cap, fF		*/
+    double coupSum;			/* sum of coupling caps on this net, fF	*/
+    bool isPort;
+    spefCoupling *coup;			/* coupling caps hung under this net	*/
+    spefResEl *res;			/* resistor segments of this net	*/
+    struct spefNet *next;		/* emission order (insertion order)	*/
+} spefNet;
+
+/* SPEF build state (valid only for the duration of one ext2spice SPEF run). */
+static HashTable spefNetTable;
+static spefNet *spefNetList = NULL;	/* head, insertion order		*/
+static spefNet *spefNetTail = NULL;
+
+/*
+ * spefGetNet --
+ *	Find-or-create the per-net accumulator for a canonical net name.
+ */
+
+static spefNet *
+spefGetNet(const char *name)
+{
+    HashEntry *he;
+    spefNet *sn;
+
+    he = HashFind(&spefNetTable, name);
+    sn = (spefNet *)HashGetValue(he);
+    if (sn != NULL) return sn;
+
+    sn = (spefNet *)mallocMagic(sizeof(spefNet));
+    sn->name = StrDup((char **)NULL, name);
+    sn->gndCap = 0.0;
+    sn->coupSum = 0.0;
+    sn->isPort = FALSE;
+    sn->coup = NULL;
+    sn->res = NULL;
+    sn->next = NULL;
+    HashSetValue(he, (ClientData)sn);
+
+    if (spefNetTail == NULL)
+	spefNetList = spefNetTail = sn;
+    else
+    {
+	spefNetTail->next = sn;
+	spefNetTail = sn;
+    }
+    return sn;
+}
+
+/*
+ * spefNodeVisit --
+ *	EFVisitNodes callback: register the net and its lumped ground cap.
+ */
+
+static int
+spefNodeVisit(
+    EFNode *node,
+    int res,
+    double cap,
+    ClientData cdata)		/* unused */
+{
+    const char *nsn;
+    spefNet *sn;
+
+    nsn = nodeSpiceName((HierName *)node->efnode_name->efnn_hier, NULL);
+    if (nsn == NULL) return 0;
+
+    sn = spefGetNet(nsn);
+    if (node->efnode_flags & EF_PORT) sn->isPort = TRUE;
+
+    cap = cap / 1000;			/* aF -> fF (matches spcnodeVisit) */
+    if (cap > EFCapThreshold)
+	sn->gndCap += cap;
+    return 0;
+}
+
+/*
+ * spefCapVisit --
+ *	EFVisitCaps callback: a coupling cap between two nets.  Hung under the
+ *	first net; added to both nets' totals.
+ */
+
+static int
+spefCapVisit(
+    HierName *hierName1,
+    HierName *hierName2,
+    double cap,
+    ClientData cdata)		/* unused */
+{
+    const char *n1, *n2;
+    spefNet *s1, *s2;
+    spefCoupling *cc;
+
+    cap = cap / 1000;			/* aF -> fF (matches spccapVisit) */
+    if (cap <= EFCapThreshold) return 0;
+
+    n1 = nodeSpiceName(hierName1, NULL);
+    n2 = nodeSpiceName(hierName2, NULL);
+    if (n1 == NULL || n2 == NULL) return 0;
+
+    s1 = spefGetNet(n1);
+    s2 = spefGetNet(n2);
+
+    cc = (spefCoupling *)mallocMagic(sizeof(spefCoupling));
+    cc->other = StrDup((char **)NULL, n2);
+    cc->cap = cap;
+    cc->next = s1->coup;
+    s1->coup = cc;
+
+    s1->coupSum += cap;
+    s2->coupSum += cap;
+    return 0;
+}
+
+/*
+ * spefResVisit --
+ *	EFVisitResists callback: a resistor between two sub-nodes of one net.
+ *	The owning net is the canonical net of terminal 1.
+ */
+
+static int
+spefResVisit(
+    const HierName *hierName1,
+    const HierName *hierName2,
+    float res,
+    ClientData cdata)		/* unused */
+{
+    HashEntry *he;
+    EFNodeName *nn;
+    const char *netname, *t1, *t2;
+    spefNet *sn;
+    spefResEl *re;
+
+    /* Canonical net of terminal 1 (its EFNode's primary name). */
+    he = EFHNLook(hierName1, (char *)NULL, "nodeName");
+    if (he == NULL) return 0;
+    nn = (EFNodeName *)HashGetValue(he);
+    netname = nodeSpiceName((HierName *)nn->efnn_node->efnode_name->efnn_hier, NULL);
+    if (netname == NULL) return 0;
+
+    t1 = nodeSpiceName((HierName *)hierName1, NULL);
+    t2 = nodeSpiceName((HierName *)hierName2, NULL);
+    if (t1 == NULL || t2 == NULL) return 0;
+
+    sn = spefGetNet(netname);
+    re = (spefResEl *)mallocMagic(sizeof(spefResEl));
+    re->t1 = StrDup((char **)NULL, t1);
+    re->t2 = StrDup((char **)NULL, t2);
+    re->res = (double)res / 1000.0;	/* milliohm -> ohm (matches spcresistVisit) */
+    re->next = sn->res;
+    sn->res = re;
+    return 0;
+}
+
+/*
+ * spefWriteNetwork --
+ *	Build the flat network for `inName`, accumulate it per net, and emit a
+ *	standard SPEF file to `f`.  Returns the number of nets written.
+ */
+
+static int
+spefWriteNetwork(
+    FILE *f,
+    const char *inName)
+{
+    int flatFlags, nnets = 0, ridx, cidx;
+    spefNet *sn;
+    spefCoupling *cc;
+    spefResEl *re;
+
+    HashInit(&spefNetTable, 128, HT_STRINGKEYS);
+    spefNetList = spefNetTail = NULL;
+
+    flatFlags = EF_FLATNODES;
+    if (IS_FINITE_F(EFCapThreshold)) flatFlags |= EF_FLATCAPS;
+    EFFlatBuild(inName, flatFlags);
+
+    /* Accumulate the extracted network (same visitors ext2spice uses). */
+    EFVisitCaps(spefCapVisit, (ClientData)NULL);
+    EFVisitResists(spefResVisit, (ClientData)NULL);
+    EFVisitNodes(spefNodeVisit, (ClientData)NULL);
+
+    /* --- SPEF header --- */
+    fprintf(f, "*SPEF \"IEEE 1481-1998\"\n");
+    fprintf(f, "*DESIGN \"%s\"\n", inName);
+    fprintf(f, "*DATE \"generated by magic ext2spice format spef\"\n");
+    fprintf(f, "*VENDOR \"magic vibeic fork\"\n");
+    fprintf(f, "*PROGRAM \"magic ext2spice\"\n");
+    fprintf(f, "*VERSION \"%s\"\n", MAGIC_VERSION);
+    fprintf(f, "*DESIGN_FLOW \"NAME_SCOPE LOCAL\"\n");
+    fprintf(f, "*DIVIDER /\n");
+    fprintf(f, "*DELIMITER :\n");
+    fprintf(f, "*BUS_DELIMITER [ ]\n");
+    fprintf(f, "*T_UNIT 1 NS\n");
+    fprintf(f, "*C_UNIT 1 FF\n");
+    fprintf(f, "*R_UNIT 1 OHM\n");
+    fprintf(f, "*L_UNIT 1 HENRY\n\n");
+
+    /* --- one *D_NET block per net --- */
+    for (sn = spefNetList; sn != NULL; sn = sn->next)
+    {
+	double totcap = sn->gndCap + sn->coupSum;
+
+	fprintf(f, "*D_NET %s %.6g\n", sn->name, totcap);
+
+	fprintf(f, "*CONN\n");
+	if (sn->isPort)
+	    fprintf(f, "*P %s B\n", sn->name);	/* B = bidirectional (dir unknown) */
+
+	if (sn->gndCap > 0.0 || sn->coup != NULL)
+	{
+	    fprintf(f, "*CAP\n");
+	    cidx = 1;
+	    if (sn->gndCap > 0.0)
+		fprintf(f, "%d %s %.6g\n", cidx++, sn->name, sn->gndCap);
+	    for (cc = sn->coup; cc != NULL; cc = cc->next)
+		fprintf(f, "%d %s %s %.6g\n", cidx++, sn->name, cc->other, cc->cap);
+	}
+
+	if (sn->res != NULL)
+	{
+	    fprintf(f, "*RES\n");
+	    ridx = 1;
+	    for (re = sn->res; re != NULL; re = re->next)
+		fprintf(f, "%d %s %s %.6g\n", ridx++, re->t1, re->t2, re->res);
+	}
+
+	fprintf(f, "*END\n\n");
+	nnets++;
+    }
+
+    /* --- free the accumulators --- */
+    for (sn = spefNetList; sn != NULL; )
+    {
+	spefNet *snext = sn->next;
+	for (cc = sn->coup; cc != NULL; )
+	{
+	    spefCoupling *cn = cc->next;
+	    freeMagic(cc->other);
+	    freeMagic((char *)cc);
+	    cc = cn;
+	}
+	for (re = sn->res; re != NULL; )
+	{
+	    spefResEl *rn = re->next;
+	    freeMagic(re->t1);
+	    freeMagic(re->t2);
+	    freeMagic((char *)re);
+	    re = rn;
+	}
+	freeMagic(sn->name);
+	freeMagic((char *)sn);
+	sn = snext;
+    }
+    HashKill(&spefNetTable);
+    spefNetList = spefNetTail = NULL;
+
+    EFFlatDone(NULL);
+    return nnets;
+}
+
+/*
+ * ----------------------------------------------------------------------------
+ *
  * Main callback for command "magic::exttospice"
  *
  * ----------------------------------------------------------------------------
@@ -290,7 +590,7 @@ CmdExtToSpice(
     static int LocResistThreshold = INFINITE_THRESHOLD;
 
     static const char * const spiceFormats[] = {
-	"SPICE2", "SPICE3", "HSPICE", "NGSPICE", "CDL", NULL
+	"SPICE2", "SPICE3", "HSPICE", "NGSPICE", "CDL", "SPEF", NULL
     };
 
     static const char * const cmdExtToSpcOption[] = {
@@ -339,6 +639,7 @@ CmdExtToSpice(
 	"hspice",
 	"ngspice",
 	"cdl",
+	"spef",
 	NULL
     };
 
@@ -917,6 +1218,8 @@ runexttospice:
     {
 	if (esFormat == CDL)
 	    sprintf(spcesDefaultOut, "%s.cdl", inName);
+	else if (esFormat == SPEF)		/* vibeic fork (roadmap #28) */
+	    sprintf(spcesDefaultOut, "%s.spef", inName);
 	else
 	    sprintf(spcesDefaultOut, "%s.spice", inName);
     }
@@ -949,6 +1252,22 @@ runexttospice:
     {
         TxError("Warning:  Current extraction style does not match .ext file!\n");
         TxError("Area/Perimeter values and parasitic values will be zero.\n");
+    }
+
+    /* vibeic fork (roadmap #28): SPEF output diverges here, BEFORE any of the	*/
+    /* SPICE device / header machinery runs, so the SPICE path is untouched.	*/
+    /* SPEF is a parasitics-only interchange format, so only the flat R/C	*/
+    /* network is needed (no FET / subckt setup).				*/
+    if (esFormat == SPEF)
+    {
+	int nnets = spefWriteNetwork(esSpiceF, inName);
+	fclose(esSpiceF);
+	EFDone(NULL);
+	TxPrintf("ext2spice: wrote %d nets to SPEF file %s\n", nnets, spcesOutName);
+#ifdef MAGIC_WRAPPER
+	Tcl_SetResult(magicinterp, spcesOutName, NULL);
+#endif
+	return;
     }
 
     /* create default devinfo entries (MOSIS) which can be overridden by
@@ -1325,6 +1644,8 @@ main(
     {
 	if (esFormat == CDL)
 	    sprintf(spcesDefaultOut, "%s.cdl", inName);
+	else if (esFormat == SPEF)		/* vibeic fork (roadmap #28) */
+	    sprintf(spcesDefaultOut, "%s.spef", inName);
 	else
 	    sprintf(spcesDefaultOut, "%s.spice", inName);
     }

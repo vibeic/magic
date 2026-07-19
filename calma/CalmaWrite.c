@@ -65,6 +65,58 @@ static const char rcsid[] __attribute__ ((unused)) ="$Header: /usr/cvsroot/magic
 #include "utils/undo.h"
 #include "calma/calma.h"
 
+/* vibeic fork (roadmap #37): MANUFACTURINGGRID (microns) retained from the	*/
+/* last tech-LEF read (defined in the lef module).  0.0 => no snap.		*/
+extern float LefManufacturingGrid;
+
+/*
+ * ----------------------------------------------------------------------------
+ *
+ * calmaSnapMfgGrid --
+ *
+ *	vibeic fork (roadmap #37): snap an instance-placement coordinate,
+ *	expressed in magic INTERNAL units, to the foundry MANUFACTURINGGRID
+ *	before it is scaled to the GDS output grid.  This is the streamout
+ *	counterpart of the DEF-import snap (roadmap #47, defSnapToMfgGrid):
+ *	off-grid instance transforms radiate off-grid vertices into every
+ *	child shape written to the GDS, even when the routed DEF itself was
+ *	on-grid.  Snapping the SREF/AREF translation (t_c, t_f) and the
+ *	array step vectors here guarantees the streamed instance origin lands
+ *	on the manufacturing grid regardless of how the use acquired its
+ *	transform.  calmaWriteScale is an integer internal->GDS factor, so a
+ *	coordinate snapped to an integer number of internal units stays on the
+ *	same grid in GDS units.  With LefManufacturingGrid == 0 this is an
+ *	exact no-op (the stock behaviour).
+ *
+ * ----------------------------------------------------------------------------
+ */
+
+int
+calmaSnapMfgGrid(
+    int coord)			/* coordinate in magic internal units */
+{
+    double upu, gmag, gdiff;
+    int g;
+
+    if (LefManufacturingGrid <= 0.0) return coord;
+    upu = (double)CIFGetOutputScale(1000);	/* microns per internal unit */
+    if (upu <= 0.0) return coord;
+
+    gmag = (double)LefManufacturingGrid / upu;	/* grid in internal units */
+    g = (int)(gmag + 0.5);			/* nearest integer grid		*/
+    gdiff = gmag - (double)g;
+    if (gdiff < 0.0) gdiff = -gdiff;
+    /* Snap only when the grid is a clean integer (>= 2) of internal units.	*/
+    if ((g < 2) || (gdiff > 1.0e-3)) return coord;
+
+    /* Round coord to the nearest multiple of g (round half away from zero,	*/
+    /* matching the DEF-import snap's lround() behaviour).			*/
+    if (coord >= 0)
+	return ((coord + (g >> 1)) / g) * g;
+    else
+	return -((((-coord) + (g >> 1)) / g) * g);
+}
+
     /* Exports */
 bool CalmaDoLibrary = FALSE;	  /* If TRUE, do not output the top level */
 bool CalmaDoLabels = TRUE;	  /* If FALSE, don't output labels with GDS-II */
@@ -1654,6 +1706,11 @@ calmaWriteUseFunc(
 				+ t->t_b*(use->cu_ysep)*y;
 		yxlate = t->t_f + t->t_d*(use->cu_xsep)*x
 				+ t->t_e*(use->cu_ysep)*y;
+		/* vibeic fork (roadmap #37): snap the expanded-array instance	*/
+		/* origin to the manufacturing grid (internal units) before	*/
+		/* scaling to GDS units.  No-op when no tech-LEF grid is known.	*/
+		xxlate = calmaSnapMfgGrid(xxlate);
+		yxlate = calmaSnapMfgGrid(yxlate);
 		xxlate *= calmaWriteScale;
 		yxlate *= calmaWriteScale;
 		calmaOutRH(12, CALMA_XY, CALMA_I4, f);
@@ -1697,8 +1754,10 @@ calmaWriteUseFunc(
 	}
 
 	/* Translation */
-	xxlate = t->t_c * calmaWriteScale;
-	yxlate = t->t_f * calmaWriteScale;
+	/* vibeic fork (roadmap #37): snap the instance origin to the		*/
+	/* manufacturing grid (internal units) before scaling to GDS units.	*/
+	xxlate = calmaSnapMfgGrid(t->t_c) * calmaWriteScale;
+	yxlate = calmaSnapMfgGrid(t->t_f) * calmaWriteScale;
 	hdrsize = isArray ? 28 : 12;
 	calmaOutRH(hdrsize, CALMA_XY, CALMA_I4, f);
 	calmaOutI4(xxlate, f);

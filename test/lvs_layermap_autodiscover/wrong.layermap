@@ -1,0 +1,9 @@
+# wrong.layermap - a DELIBERATELY WRONG foundry map (numbers shifted off the
+# real GDS). Proves the gate passes because the CORRECT foundry numbers were
+# derived, not merely because "a layer-map exists": reading the real foundry
+# GDS with these wrong numbers must still drop every layer (anchors lost).
+met1  drawing  10  0
+met2  drawing  11  0
+met3  drawing  12  0
+via1  drawing  13  0
+via2  drawing  14  0
