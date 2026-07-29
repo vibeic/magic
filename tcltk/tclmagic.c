@@ -30,6 +30,7 @@
 #endif
 
 #include "tcltk/tclmagic.h"
+#include "tcltk/tcldir.h"
 #include "utils/main.h"
 #include "utils/magic.h"
 #include "utils/geometry.h"
@@ -48,13 +49,10 @@
 #include "dbwind/dbwind.h"
 
 /*
- * String containing the version number of magic.  Don't change the string
- * here, nor its format.  It is updated by the Makefile in this directory.
+ * MagicVersion / MagicRevision / MagicCompileTime are defined once in
+ * utils/buildinfo.c and declared in utils/magic_buildinfo.h (included via
+ * utils/magic.h).  They no longer need a MAGIC_WRAPPER-guarded definition here.
  */
-
-char *MagicVersion = MAGIC_VERSION;
-char *MagicRevision = MAGIC_REVISION;
-char *MagicCompileTime = MAGIC_BUILDDATE;
 
 #if TCL_MAJOR_VERSION < 9
 const char *Tclmagic_InitStubsVersion = "8.5";
@@ -960,6 +958,52 @@ _magic_startup(ClientData clientData,
 	oldchannel = Tcl_GetStdChannel(TCL_STDIN);	// Get existing stdin
 	fsOrig = Tcl_GetChannelInstanceData(oldchannel);
 
+	/* We are about to replace stdin with a brand-new channel over the	*/
+	/* same file descriptor.  The new channel starts with an empty		*/
+	/* buffer, so any bytes the old channel had already read() out of the	*/
+	/* kernel into *its* buffer would be silently dropped by the swap --	*/
+	/* e.g. commands piped in fast enough that Tcl buffered them during	*/
+	/* startup.  Drain them here and hand them to TerminalInputProc via	*/
+	/* TxBuffer, which it serves ahead of any fresh read(), so no piped	*/
+	/* input is ever lost regardless of startup timing.			*/
+	{
+	    int nqueued = Tcl_InputBuffered(oldchannel);
+	    if (nqueued > 0)
+	    {
+		Tcl_Obj *qobj = Tcl_NewObj();
+		Tcl_IncrRefCount(qobj);
+		if (Tcl_ReadChars(oldchannel, qobj, nqueued, 0) > 0)
+		{
+#if TCL_MAJOR_VERSION < 9
+		    int qlen;
+#else
+		    Tcl_Size qlen;
+#endif
+		    char *qstr = Tcl_GetStringFromObj(qobj, &qlen);
+		    if (qlen > 0)
+		    {
+			if (TxBuffer == NULL)
+			{
+			    TxBuffer = Tcl_Alloc(qlen + 1);
+			    memcpy(TxBuffer, qstr, qlen);
+			    TxBuffer[qlen] = '\0';
+			}
+			else	/* prepend the drained bytes ahead of TxBuffer */
+			{
+			    size_t blen = strlen(TxBuffer);
+			    char *merged = Tcl_Alloc(qlen + blen + 1);
+			    memcpy(merged, qstr, qlen);
+			    memcpy(merged + qlen, TxBuffer, blen);
+			    merged[qlen + blen] = '\0';
+			    Tcl_Free(TxBuffer);
+			    TxBuffer = merged;
+			}
+		    }
+		}
+		Tcl_DecrRefCount(qobj);
+	    }
+	}
+
 	/* Copy the structure from the old to the new channel */
 	stdChannel = (Tcl_ChannelType *)Tcl_GetChannelType(oldchannel);
 	memcpy(&inChannel, stdChannel, sizeof(Tcl_ChannelType));
@@ -1485,7 +1529,15 @@ Tclmagic_Init(interp)
 
     /* Add the magic TCL directory to the Tcl library search path */
 
-    Tcl_Eval(interp, "lappend auto_path " TCL_DIR );
+    {
+	char dir[PATH_MAX], cmd[PATH_MAX];
+	size_t dlen, clen;
+	dlen = MagicTclDir(dir, sizeof(dir), NULL);
+	assert(dlen < sizeof(dir));
+	clen = snprintf(cmd, sizeof(cmd), "lappend auto_path {%s}", dir);
+	assert(clen < sizeof(cmd));
+	Tcl_Eval(interp, cmd);
+    }
 
     /* Get $CAD_ROOT from a Tcl variable, if it exists, and if not, then */
     /* set CAD_ROOT from the environment variable of the same name, if	 */
@@ -1500,7 +1552,7 @@ Tclmagic_Init(interp)
 	Tcl_SetVar(interp, "CAD_ROOT", cadroot, TCL_GLOBAL_ONLY);
     }
 
-    Tcl_PkgProvide(interp, "Tclmagic", MAGIC_VERSION);
+    Tcl_PkgProvide(interp, "Tclmagic", MagicVersion);
     return TCL_OK;
 }
 

@@ -20,7 +20,7 @@ command.
 # Build Info
 
 * Based on AlmaLinux 10 (EL10)
-* Tcl/Tk 9.0.1
+* Tcl/Tk 9.0.4+ (automatically uses github.com/tktcl/{tcl,tk} core-9-0-* release)
 * and Magic 8.x
 * all default modules enabled (including all Display drivers cairo/X11/OpenGL)
 
@@ -42,19 +42,27 @@ Example startup with command line options:
 # FAQ: How to use (inside docker / podman)
 
 ```
+echo DISPLAY=$DISPLAY # should look like :0
+xauth list # find the correct cookie for display :0 ; dnf install xauth
+export X11_AUTHORITY_COOKIE="00112233445566778899aabbccddeeff" # fixup with your exact cookie
+
 chmod +x Magic-x86_64.AppImage
 
 ### Podman or Docker, use :Z when rootless with selinux enabled
 podman run --rm --device /dev/fuse --privileged \
   -v "$(pwd):/tmp/work:Z" -v "/tmp/.X11-unix/X0:/tmp/.X11-unix/X0:Z" \
-  -e DISPLAY -ti almalinux:10
+  -e DISPLAY -e X11_AUTHORITY_COOKIE -ti almalinux:10
 
 ### Inside Docker:
 dnf update -y
 
-dnf install -y fuse libX11 cairo libGL libGLU
+dnf install -y fuse libX11 cairo libGL libGLU xauth
 
 cd /tmp/work
+
+echo DISPLAY=$DISPLAY # should look like :0
+echo X11_AUTHORITY_COOKIE=$X11_AUTHORITY_COOKIE # should look like hex-string
+xauth -q add "$DISPLAY" "MIT-MAGIC-COOKIE-1" "$X11_AUTHORITY_COOKIE"
 
 ./Magic-x86_64.AppImage -d XR -T scmos
 ```
@@ -122,6 +130,6 @@ Transitive/Third-Party Runtime Dependencies (for information only):
 | libgcc_s.so.1          | GCC_4.2.0           | libgcc_s-14-20250110 |
 | libxml2.so.2           | LIBXML2_2.6.0       | libxml2-2.12.5-5     |
 | libpng16.so.16         | PNG16_0             | libpng-2:1.6.40-8    |
-| liblzma.so.5           | XZ_5.0              | xz-devel-1:5.6.2-4   |
+| liblzma.so.5           | XZ_5.0              | xz-libs-1:5.6.2-4    |
 | libz.so.1              | ZLIB_1.2.9          | zlib-ng-2.2.3-1      |
 |                        |                     | zlib-ng-compat-2.2.3-1 |

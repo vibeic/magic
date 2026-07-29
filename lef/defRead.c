@@ -1386,6 +1386,9 @@ DefReadNets(
 		needanno = annotate;
 		ispwrgnd = FALSE;
 
+		/* Any nondefault rule resets at the start of a new net. */
+		ruleset = (LefRules *)NULL;
+
 		/* Update the record of the number of nets processed	*/
 		/* and spit out a message for every 5% finished.	*/
 
