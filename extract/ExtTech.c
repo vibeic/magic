@@ -1559,7 +1559,11 @@ ExtTechSimpleSidewallCap(argc, argv)
     DBTechNoisyNameMask(argv[1], &types1);
     TTMaskSetMask(allExtractTypes, &types1);
     plane = DBTechNoisyNamePlane(argv[2]);
-    capVal = aToCap(argv[3]);
+
+    /* Correct for magic's double counting of edges by halving the capacitance
+     * per unit length.
+     */
+    capVal = 0.5 * aToCap(argv[3]);
 
     if (argc == 5)
     {
@@ -3291,6 +3295,15 @@ ExtTechLine(sectionName, argc, argv)
 		return (TRUE);
 	    break;
 	case SIDEWALL:
+
+	    /* NOTE:  Originally, the sidewall capacitance coefficient was
+	     * supposed to be the value that is appropriate to compute
+	     * half the total sidewall on each edge.  This has now been
+	     * moved here to the tech file parser.  Sidewall values are
+	     * correct for the existing open PDKs and presumably incorrect
+	     * for the original SCMOS tech files.
+	     */
+
 	    DBTechNoisyNameMask(argv[2], &types2);
 	    TTMaskSetMask(allExtractTypes, &types2);
 	    DBTechNoisyNameMask(argv[3], &near);
@@ -3299,7 +3312,10 @@ ExtTechLine(sectionName, argc, argv)
 	    TTMaskSetMask(allExtractTypes, &far);
 	    if (TTMaskHasType(&types1, TT_SPACE))
 		TechError("Can't have space on inside of edge [ignored]\n");
-	    capVal = aToCap(argv[5]);
+	    /* Correct for magic's double counting of edges by halving the
+	     * value of capacitance per unit length.
+	     */
+	    capVal = 0.5 * aToCap(argv[5]);
 	    if (argc == 7)
 	    {
 		sscanf(argv[6], "%lg", &doffset);

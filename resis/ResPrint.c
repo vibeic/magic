@@ -245,12 +245,22 @@ ResPrintExtNode(outextfile, nodelist, node)
     /* extraction, but this prevents magic from generating an invalid	*/
     /* netlist.								*/
 
-    if (node->status & DONTKILL)
-	if (DoKillNode == TRUE)
-	{
-	    DoKillNode = FALSE;
-	    NeedFix = TRUE;
-	}
+    if (DoKillNode && (node->status & DONTKILL))
+    {
+	DoKillNode = FALSE;
+	NeedFix = TRUE;
+    }
+
+    /* If somehow a node which is a port is still being marked as killed,
+     * treat the same way as above for device terminals that failed to
+     * extract.
+     */
+
+    if (DoKillNode && (node->status & PORTNODE))
+    {
+	DoKillNode = FALSE;
+	NeedFix = TRUE;
+    }
 
     if ((ResOptionsFlags & ResOpt_DoExtFile) && DoKillNode)
         fprintf(outextfile, "killnode \"%s\"\n", nodename);

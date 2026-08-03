@@ -61,7 +61,7 @@ style	lambda_irsim=0.35
 	sideOverlap(PolyCap, ~PolyCap, M2Cap, 3.2, M1Cap)
 	sideOverlap(PolyCap, ~PolyCap, M3Cap, 2.1, M1CapCommaM2Cap)
 
-	sidewall PolyCap ~PolyCap ~PolyCap PolyCap	8.4
+	sidewall PolyCap ~PolyCap ~PolyCap PolyCap	16.8
 	/* ------------------------------------------------- */
 
 
@@ -78,7 +78,7 @@ style	lambda_irsim=0.35
 	sideOverlap(M1Cap, ~M1Cap, M2Cap, 10.2,  )
 	sideOverlap(M1Cap, ~M1Cap, M3Cap, 5.6, M2Cap)
 
-	sidewall M1Cap   ~M1Cap   ~M1Cap   M1Cap	22.4
+	sidewall M1Cap   ~M1Cap   ~M1Cap   M1Cap	44.8
 	/* ------------------------------------------------- */
 
 
@@ -96,7 +96,7 @@ style	lambda_irsim=0.35
 	sideOverlap(M2Cap, ~M2Cap, M1Cap,   17.5,  )
 	sideOverlap(M2Cap, ~M2Cap, M3Cap,   12.6,  )
 
-	sidewall M2Cap   ~M2Cap   ~M2Cap   M2Cap	25.2
+	sidewall M2Cap   ~M2Cap   ~M2Cap   M2Cap	50.4
 	/* ------------------------------------------------- */
 
 
@@ -115,7 +115,7 @@ style	lambda_irsim=0.35
 	sideOverlap(M3Cap, ~M3Cap, M1Cap,   17.9, M2Cap)
 	sideOverlap(M3Cap, ~M3Cap, M2Cap,   22.4,  )
 
-	sidewall M3Cap   ~M3Cap   ~M3Cap   M3Cap	40
+	sidewall M3Cap   ~M3Cap   ~M3Cap   M3Cap	80
 	/* ------------------------------------------------- */
 
 	/* Unchanged yet for .35um*/

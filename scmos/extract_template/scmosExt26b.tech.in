@@ -57,7 +57,7 @@ style	lambda_irsim=0.5
 	sideOverlap(PolyCap, ~PolyCap, M2Cap, 6, M1Cap)
 	sideOverlap(PolyCap, ~PolyCap, M3Cap, 4, M1CapCommaM2Cap)
 
-	sidewall PolyCap ~PolyCap ~PolyCap PolyCap	11
+	sidewall PolyCap ~PolyCap ~PolyCap PolyCap	22
 	/* ------------------------------------------------- */
 
 
@@ -74,7 +74,7 @@ style	lambda_irsim=0.5
 	sideOverlap(M1Cap, ~M1Cap, M2Cap, 12,  )
 	sideOverlap(M1Cap, ~M1Cap, M3Cap, 7, M2Cap)
 
-	sidewall M1Cap   ~M1Cap   ~M1Cap   M1Cap	27
+	sidewall M1Cap   ~M1Cap   ~M1Cap   M1Cap	54
 	/* ------------------------------------------------- */
 
 
@@ -92,7 +92,7 @@ style	lambda_irsim=0.5
 	sideOverlap(M2Cap, ~M2Cap, M1Cap,   23,  )
 	sideOverlap(M2Cap, ~M2Cap, M3Cap,   10,  )
 
-	sidewall M2Cap   ~M2Cap   ~M2Cap   M2Cap	33
+	sidewall M2Cap   ~M2Cap   ~M2Cap   M2Cap	66
 	/* ------------------------------------------------- */
 
 
@@ -111,7 +111,7 @@ style	lambda_irsim=0.5
 	sideOverlap(M3Cap, ~M3Cap, M1Cap,   20, M2Cap)
 	sideOverlap(M3Cap, ~M3Cap, M2Cap,   25,  )
 
-	sidewall M3Cap   ~M3Cap   ~M3Cap   M3Cap	50
+	sidewall M3Cap   ~M3Cap   ~M3Cap   M3Cap	100
 	/* ------------------------------------------------- */
 
 

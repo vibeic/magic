@@ -47,7 +47,7 @@ style	lambda_irsim=0.6(hp)
 	sideOverlap(PolyCap, ~PolyCap, M1Cap, 34, )
 	sideOverlap(PolyCap, ~PolyCap, M2Cap, 27, M1Cap)
 
-	sidewall PolyCap ~PolyCap ~PolyCap PolyCap	15
+	sidewall PolyCap ~PolyCap ~PolyCap PolyCap	30
 	/* ------------------------------------------------- */
 
 	/* ------------  metal1 capacitances ---------------- */
@@ -62,7 +62,7 @@ style	lambda_irsim=0.6(hp)
 	sideOverlap(M1Cap, ~M1Cap, PolyCap, 33, )
 	sideOverlap(M1Cap, ~M1Cap, M2Cap, 28, )
 
-	sidewall M1Cap   ~M1Cap   ~M1Cap   M1Cap	27
+	sidewall M1Cap   ~M1Cap   ~M1Cap   M1Cap	54
 	/* ------------------------------------------------- */
 
 
@@ -79,7 +79,7 @@ style	lambda_irsim=0.6(hp)
 	sideOverlap(M2Cap, ~M2Cap, PolyCap, 22, M1Cap)
 	sideOverlap(M2Cap, ~M2Cap, M1Cap,   28, )
 
-	sidewall M2Cap   ~M2Cap   ~M2Cap   M2Cap	33
+	sidewall M2Cap   ~M2Cap   ~M2Cap   M2Cap	66
 	/* ------------------------------------------------- */
 
 

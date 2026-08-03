@@ -2515,10 +2515,10 @@ style SCN08(HP26G)
     /* Cross-couple capacitance */
     /* Perimeter parasitic capacitance (in attofarads per lambda)
         [ 1 lambda = 0.4 micron ---> multiplication factor 0.4 ]   */
-    sidewall  allP       ~(allP)       ~(allP)       allP       11
-    sidewall  allMetal1  ~(allMetal1)  ~(allMetal1)  allMetal1  24
-    sidewall  allMetal2  ~(allMetal2)  ~(allMetal2)  allMetal2  27
-    sidewall  allMetal3  ~(allMetal3)  ~(allMetal3)  allMetal3  39
+    sidewall  allP       ~(allP)       ~(allP)       allP       22
+    sidewall  allMetal1  ~(allMetal1)  ~(allMetal1)  allMetal1  48
+    sidewall  allMetal2  ~(allMetal2)  ~(allMetal2)  allMetal2  54
+    sidewall  allMetal3  ~(allMetal3)  ~(allMetal3)  allMetal3  78
 
     /* Active devices: N-well process                              */
     fet pfet    pdiff,pdc       2       pfet  Vdd!  nwell    0  0
@@ -2620,10 +2620,10 @@ style SCN06(HP14B)
     /* Cross-couple capacitance */
     /* Perimeter parasitic capacitance (in attofarads per lambda)
         [ 1 lambda = 0.3 micron ---> multiplication factor 0.3 ]   */
-    sidewall  allP       ~(allP)       ~(allP)       allP        9
-    sidewall  allMetal1  ~(allMetal1)  ~(allMetal1)  allMetal1  19
-    sidewall  allMetal2  ~(allMetal2)  ~(allMetal2)  allMetal2  21
-    sidewall  allMetal3  ~(allMetal3)  ~(allMetal3)  allMetal3  31
+    sidewall  allP       ~(allP)       ~(allP)       allP       18
+    sidewall  allMetal1  ~(allMetal1)  ~(allMetal1)  allMetal1  38
+    sidewall  allMetal2  ~(allMetal2)  ~(allMetal2)  allMetal2  42
+    sidewall  allMetal3  ~(allMetal3)  ~(allMetal3)  allMetal3  62
 
     /* Active devices: N-well process                              */
     fet pfet    pdiff,pdc       2       pfet  Vdd!   nwell    0  0

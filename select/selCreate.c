@@ -470,14 +470,19 @@ SelectArea(scx, types, xMask, globmatch)
 
     if (TTMaskHasType(types, L_LABEL))
     {
+	TileTypeBitMask *maskptr;
+
 	TTMaskClearType(types, L_LABEL);
-	if (TTMaskIsZero(types)) types = &DBAllButSpaceAndDRCBits;
+	if (TTMaskIsZero(types))
+	    maskptr = &DBAllTypeBits;
+	else
+	    maskptr = types;
 
 	if (globmatch != NULL)
-	    DBCellCopyGlobLabels(scx, types, xMask, SelectUse, &labelArea,
+	    DBCellCopyGlobLabels(scx, maskptr, xMask, SelectUse, &labelArea,
 		    globmatch);
 	else
-	    DBCellCopyAllLabels(scx, types, xMask, SelectUse, &labelArea);
+	    DBCellCopyAllLabels(scx, maskptr, xMask, SelectUse, &labelArea);
     }
 
     /* Select cell uses. */

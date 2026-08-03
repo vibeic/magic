@@ -895,6 +895,7 @@ ResPreProcessDevices(TileList, DeviceList, Def, devNodeTable)
     resInfo	*tstruct;
     TileType	tt, residue;
     int		pNum;
+    bool	isdev;
 
     while (TileList != (ResDevTile *)NULL)
     {
@@ -925,12 +926,24 @@ ResPreProcessDevices(TileList, DeviceList, Def, devNodeTable)
 	GOTOPOINT(tile, &(TileList->area.r_ll));
 	PlaneSetHint(Def->cd_planes[pNum], tile);
 
-	tt = TiGetType(tile);
+	tt = TiGetLeftType(tile);
+	isdev = TTMaskHasType(&ExtCurStyle->exts_deviceMask, tt);
+
+	if (IsSplit(tile) && !isdev)
+	{
+	    /* Check the other side */
+	    tt = TiGetRightType(tile);
+ 	    isdev = TTMaskHasType(&ExtCurStyle->exts_deviceMask, tt);
+	}
+
+	/* Warning:  Will probably need to deal with resInfo structs on split
+	 * tiles when both sides of the split tile are not TT_SPACE!
+	 */
 	tstruct = (resInfo *) TiGetClientPTR(tile);
 
 	if ((tstruct == (resInfo *)CLIENTDEFAULT) ||
 		    (tstruct->deviceList == NULL) ||
-		    !TTMaskHasType(&ExtCurStyle->exts_deviceMask, tt))
+		    (!isdev))
 	{
 	    TxError("Bad Device Location at %d,%d\n",
 			TileList->area.r_ll.p_x,

@@ -911,19 +911,56 @@ resMakeDevFunc(tile, dinfo, cx)
     Rect	devArea;
     TileType	ttype;
  
-    /* To simplify processing, if a split tile does not have TT_SPACE
-     * on either side, then only the left side is processed.
-     */
-    if (IsSplit(tile))
-	if (TiGetLeftType(tile) != TT_SPACE && TiGetRightType(tile) != TT_SPACE)
-	    if (dinfo & TT_SIDE)
-		return 0;
-
     TiToRect(tile, &devArea);
     GeoTransRect(&cx->tc_scx->scx_trans, &devArea, &thisDev->area);
 
+    /* 
+     * NOTE:  The .ext file may record devices on a split tile when the lower
+     * left corner is not the device.  Because the location is only one unit
+     * square, the area of the device will not be searched.  Check for this
+     * case and handle accordingly.
+     */
     if (IsSplit(tile))
-	ttype = ((dinfo & TT_SIDE)) ? SplitRightType(tile) : SplitLeftType(tile);
+    {
+	TileType lefttype, righttype;
+	bool devleft, devright;
+
+	lefttype = TiGetLeftType(tile);
+	devleft = TTMaskHasType(&ExtCurStyle->exts_deviceMask, lefttype);
+	if (!devleft)
+	{
+	    righttype = TiGetRightType(tile);
+	    devright = TTMaskHasType(&ExtCurStyle->exts_deviceMask, righttype);
+	    if (devright)
+	    {
+		int hheight, hwidth;
+
+		/* Find the tile half width and half height.  If the width
+		 * or height is not an even integer, round up.
+		 */ 
+		hheight = (TOP(tile) - BOTTOM(tile));
+		hwidth = (RIGHT(tile) - LEFT(tile));
+		if (hheight & 1) hheight++;
+		if (hwidth & 1) hwidth++;
+		hheight >>= 1;
+		hwidth >>= 1;
+
+		/* Use the type of the tile's right side */
+		ttype = SplitRightType(tile);
+
+		/* Move the device area into the actual device location */
+		thisDev->area.r_ll.p_x += hwidth;
+		if (TiGetTypeExact(tile) & TT_DIRECTION)
+		    thisDev->area.r_ll.p_y += hheight;
+		else
+		    thisDev->area.r_ur.p_y -= hheight;
+	    }
+	    else
+		ttype = ((dinfo & TT_SIDE)) ? righttype : lefttype;
+	}
+	else
+	    ttype = ((dinfo & TT_SIDE)) ? righttype : lefttype;
+    }
     else
 	ttype = TiGetType(tile);
 
@@ -985,14 +1022,6 @@ resExpandDevFunc(tile, dinfo, cx)
     int pNum;
     Rect area;
 
-    /* To simplify processing, if a split tile does not have TT_SPACE
-     * on either side, then only the left side is processed.
-     */
-    if (IsSplit(tile))
-	if (TiGetLeftType(tile) != TT_SPACE && TiGetRightType(tile) != TT_SPACE)
-	    if (dinfo & TT_SIDE)
-		return 0;
-
     pNum = DBPlane(thisDev->type);
     if (devExtentsStack == NULL)
 	devExtentsStack = StackNew(8);
@@ -1013,8 +1042,25 @@ resExpandDevFunc(tile, dinfo, cx)
 
 	if (IsSplit(tp))
 	{
+	    TileType leftType;
+	    bool isDevType;
+
 	    dinfo = TiGetTypeExact(tp);
-	    if (TiGetLeftType(tp) == TT_SPACE)
+
+	    /* For split tiles, determine which side is the device.
+	     * Since some devices (e.g., diodes, MiM caps) may have contact
+	     * types that are part of the device, make sure to compare the
+	     * residue mask of the type, not the type itself.
+	     */
+
+	    leftType = TiGetLeftType(tp);
+	    if (DBIsContact(leftType))
+		isDevType = (TTMaskHasType(DBResidueMask(leftType), thisDev->type)) ?
+			TRUE : FALSE;
+	    else
+		isDevType = (leftType == thisDev->type) ? TRUE : FALSE;
+
+	    if (!isDevType)
 	    {
 		dinfo |= TT_SIDE;	/* Look at tile right side */
 		sides |= IGNORE_LEFT;
@@ -1387,6 +1433,11 @@ ResExtractNet(node, resisdata, cellname)
 	thisDev->nextDev = DevTiles;
 	DevTiles = thisDev;
 
+	/* Because resMakeDevFunc() may adjust the area to contain the
+	 * device, copy thisDev->area back into scx.scx_area
+	 */
+	scx.scx_area = thisDev->area;
+
 	/* Paint the entire device into ResUse */
 	TTMaskSetOnlyType(&tMask, thisDev->type);
 	DBTreeSrTiles(&scx, &tMask, 0, resExpandDevFunc, (ClientData)thisDev);
@@ -1666,7 +1717,7 @@ FindStartTile(resisdata, SourcePoint)
 	TileType rtype;
 
 	for (rtype = TT_TECHDEPBASE; rtype < DBNumUserLayers; rtype++)
-	    if (TTMaskHasType(rmask, rtype))
+	    if (TTMaskHasType(rmask, rtype) && (rtype != savtype))
 	    {
 		resisdata->rg_ttype = rtype;
 		if ((tile = FindStartTile(resisdata, SourcePoint)) != NULL)

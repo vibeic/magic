@@ -3057,6 +3057,13 @@ extSideBottom(tpfar, bp, esws)
  * amount of capacitance for an edge with tpnear on the close side
  * and tpfar on the remote side.
  *
+ * Important!  The sidewall coeffient is correct for the coupling between
+ * edges, but both edges will be checked, causing a double-count, so each
+ * edge should contribute half of the total.  For a long time the sidewall
+ * coefficient was claimed to need to be half the value, but the offset
+ * makes it incorrect to halve the coefficient, and it is necessary to
+ * halve the total sidewall capacitance when doing the calculations.
+ *
  * Results:
  *	Returns 0 always.
  *
@@ -3080,7 +3087,7 @@ extSideCommon(rinside, rfar, tpnear, tpfar, bdir, overlap, sep, extCoupleList)
     HashEntry *he;
     EdgeCap *e;
     CoupleKey ck;
-    CapValue cap;
+    CapValue cap, swcap;
 
     /* Get the tile types of tpnear and tpfar */
     extGetBoundaryTypes2(bdir, tpnear, tpfar, &near, &far);
@@ -3092,11 +3099,10 @@ extSideCommon(rinside, rfar, tpnear, tpfar, bdir, overlap, sep, extCoupleList)
     cap = extGetCapValue(he);
     for (e = extCoupleList; e; e = e->ec_next)
 	if (TTMaskHasType(&e->ec_near, near) && TTMaskHasType(&e->ec_far, far)) {
-	    cap += (e->ec_cap * overlap) / (sep + e->ec_offset);
+	    swcap = (e->ec_cap * overlap) / (sep + e->ec_offset);
+	    cap += swcap;
 	    if (CAP_DEBUG)
-		extAdjustCouple(he,
-			(e->ec_cap * overlap) / (sep + e->ec_offset),
-			"sidewall");
+		extAdjustCouple(he, swcap, "sidewall");
 	}
     extSetCapValue(he, cap);
 }
