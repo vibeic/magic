@@ -31,7 +31,7 @@ Attach a "property" (string key and value pair) to the edit cell
       <BLOCKQUOTE>
          where <I>key</I> and <I>value</I> are any text strings. <BR>
 	 <I>type</I> may be one of <B>string</B>, <B>integer</B>,
-		<B>dimension</B>, or <B>double</B>.
+		<B>dimension</B>, <B>plane</B>, or <B>double</B>.
       </BLOCKQUOTE>
    </BLOCKQUOTE>
 
@@ -101,6 +101,12 @@ Attach a "property" (string key and value pair) to the edit cell
 	     considered to be measurements and do not scale.  Multiple
 	     values may be passed on the command line as additional arguments,
 	     or the set of values may be given as a list.
+	<DT> <B>plane</B> type:
+	<DD> The property itself is saved as a database plane;  when specified
+	     as the value to a <B>property</B> command, it is parsed like a
+	     <B>dimension</B> list (see above).  All lists must be in groups
+	     of four, representing the lower-left and upper-right coordinates
+	     of a rectangle in the plane.
       </DL>
    </BLOCKQUOTE>
 
@@ -208,8 +214,18 @@ Attach a "property" (string key and value pair) to the edit cell
 	     always generate mask layer <I>type</I> in the specified rectangle
 	     area when writing GDS or CIF output.  <I>type</I> may be a templayer,
 	     such that <I>type</I> could be defined as the absence of a mask layer,
-	     for example.  This property is always of type <B>dimension</B> and
-	     must have a multiple of four values.
+	     for example.  This property is always of type <B>plane</B> and
+	     must have a multiple of four values, all of which are parsed as type
+	     <B>dimension</B>. <P>
+	     <I>NOTE</I>:  A mask hint will only appear in the GDS or CIF output
+	     if there is a corresponding "<B>mask-hints</B> <I>type</B>" record in
+	     the tech file's <B>cifoutput</B> section as part of a <B>layer</B> or
+	     <B>templayer</B> which determines when and how the mask hint is handled.  
+	     Usually the mask hint is OR'd with the rest of the layer, but that may
+	     be followed by a grow-shrink operation that fills in narrow gaps.  It
+	     is also possible for the layer to <I>remove</I> material, so be aware
+	     of how the tech file interprets <I>type</I> when using
+	     <B>MASKHINTS_</B><I>type</I>.
       </DL>
    </BLOCKQUOTE>
 
