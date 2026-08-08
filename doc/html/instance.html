@@ -32,10 +32,12 @@ Operations on cell instances (uses).
 	   <DT> [<B>list</B>] <B>children</B> [<I>name</I>]
 	   <DD> List all of the children instances of cell use <I>name</I>,
 		or the children of the currently selected cell instance.
-	   <DT> [<B>list</B>] <B>parent</B> [<I>name</I>]
+	   <DT> [<B>list</B>] <B>parent</B> <I>name</I>
 	   <DD> List the parent cell definition of cell use <I>name</I>,
 		or the parent of the currently selected cell instance.
-	   <DT> [<B>list</B>] <B>exists</B>|<B>self</B> [<I>name</I>]
+	   <DT> [<B>list</B>] <B>celldef</B> [<I>name</I>]
+	   <DD> List the cell definition of cell use <I>name</I>.
+	   <DT> [<B>list</B>] <B>exists</B>|<B>self</B>|<B>instances</B> [<I>name</I>]
 	   <DD> Returns the name of the instance if the cell exists, or false
 		(0) if the instance does not exist (is not loaded into the
 		database; the cell may still exist on disk).  If <I>name</I>
