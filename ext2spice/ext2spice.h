@@ -33,7 +33,7 @@ extern int subcktUndef(Use *use, HierName *hierName, bool is_top); /* @typedef c
 extern EFNode *spcdevSubstrate(HierName *prefix, HierName *suffix, int type, FILE *outf);
 extern const char *nodeSpiceName(const HierName *hname, EFNode **rnode);
 extern int nodeVisitDebug(EFNode *node, int res, double cap, ClientData cdata); /* @typedef cb_extflat_visitnodes_t (UNUSED) */
-extern void topVisit(Def *def, bool doStub);
+extern void topVisit(Def *def, bool doStub, bool isTop);
 extern void swapDrainSource(Dev *dev);
 /* vibeic fork (LVS fidelity): see ext2spice.c for details */
 extern bool esAutoPromoteTopPorts(Def *def);

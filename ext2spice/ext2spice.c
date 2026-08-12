@@ -1516,7 +1516,7 @@ runexttospice:
 		locDoSubckt = TRUE;
 	}
 	if ((esDoSubckt == TRUE) || (locDoSubckt == TRUE))
-	    topVisit(efFlatRootDef, FALSE);
+	    topVisit(efFlatRootDef, FALSE, TRUE);
 
 	/* When generating subcircuits, remove the subcircuit	*/
 	/* flag from the top level cell.  Other than being	*/
@@ -1742,7 +1742,7 @@ main(
 	    locDoSubckt = TRUE;
     }
     if ((esDoSubckt == TRUE) || (locDoSubckt == TRUE))
-	topVisit(efFlatRootDef, FALSE);
+	topVisit(efFlatRootDef, FALSE, TRUE);
 
     /* If we don't want to write subcircuit calls, remove the	*/
     /* subcircuit flag from all cells at this time.		*/
@@ -2338,7 +2338,10 @@ typedef struct _lnn {
  *	the subcircuit.  "name" is the name of the cell def.  If "doStub"
  *	is TRUE, then the subcircuit is a stub (empty declaration) for a
  *	subcircuit, and implicit substrate connections should not be
- *	output.
+ *	output.  "isTop" says whether "def" is the design's TOP cell: this
+ *	routine is called once per def by the hierarchical path, and only
+ *	the caller knows which def is the root, so anything that is a
+ *	property of the TOP cell has to be told, not guessed.
  *
  * NOTE: The cookie-cutter method for extraction can result in multiple
  * connections to the same port if the net spans multiple extraction regions.
@@ -2351,7 +2354,8 @@ typedef struct _lnn {
 void
 topVisit(
     Def *def,
-    bool doStub)
+    bool doStub,
+    bool isTop)			/* TRUE only for the design's top cell */
 {
     EFNode *snode;
     EFNodeName *sname, *nodeName;
@@ -2370,8 +2374,16 @@ topVisit(
     /* Primitive devices are not output at all */
     if (def->def_flags & DEF_PRIMITIVE) return;
 
-    /* vibeic fork (LVS fidelity):  auto-promote unlabeled top-level nets */
-    if (!doStub && esDoAutoTopPorts) esAutoPromoteTopPorts(def);
+    /* vibeic fork (LVS fidelity):  auto-promote the TOP cell's plain labels
+     * to ports.  Scoped by "isTop" because this routine is also called for
+     * every sub-cell in the hierarchical path (ext2hier.c), where an unguarded
+     * call gave EVERY sub-cell's plain labels a port -- changing the sub-
+     * circuit's port list and every X-call's argument list, which is an LVS
+     * mismatch manufactured by the extractor.  Labelling internal nets is
+     * ordinary practice in custom/analog layout; a label is a name, and only
+     * the top cell's names are candidates for promotion.
+     */
+    if (isTop && !doStub && esDoAutoTopPorts) esAutoPromoteTopPorts(def);
 
     HashInit(&portNameTable, 32, HT_STRINGKEYS);
 

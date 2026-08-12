@@ -2400,7 +2400,11 @@ esHierVisit(
 
     /* Generate subcircuit header */
     if ((def != topdef) || (def->def_flags & DEF_SUBCIRCUIT) || (locDoSubckt == TRUE))
-	topVisit(def, doStub);
+	/* vibeic fork (LVS fidelity):  this loop reaches EVERY def, so say
+	 * which one is the top -- the "port makeall" promotion inside
+	 * topVisit() applies to the top cell alone.
+	 */
+	topVisit(def, doStub, (def == topdef));
     else
 	fprintf(esSpiceF, "\n* Top level circuit %s\n\n", topdef->def_name);
 

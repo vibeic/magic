@@ -80,6 +80,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 GATES=(
 "test/def_mfggrid_snap/run.sh            magic python"
 "test/def_ndr_via_byrule/run.sh          magic python"
+"test/ext2spice_hier_ports/run.sh        magic"
 "test/gds_foundry_layers/run.sh          magic python"
 "test/gds_mfggrid_snap/run.sh            magic python"
 "test/lef_extract_tech/run.sh            magic python"
