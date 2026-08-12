@@ -117,6 +117,46 @@ calmaSnapMfgGrid(
 	return -((((-coord) + (g >> 1)) / g) * g);
 }
 
+/*
+ * ----------------------------------------------------------------------------
+ *
+ * calmaSnapMfgGridStep --
+ *
+ *	vibeic fork: snap an array STEP (a per-element displacement, in magic
+ *	internal units) to the manufacturing grid.
+ *
+ *	A step is not a coordinate, and the difference matters in exactly one
+ *	place: a step shorter than half the grid rounds to ZERO, which would
+ *	stack every element of the array on top of its origin.  Losing the
+ *	array entirely is a far worse answer than an off-grid pitch, so a step
+ *	that cannot be snapped without vanishing is left EXACTLY as the design
+ *	had it, and says so once per write.  Everything else snaps as usual, so
+ *	origin + i*step lands on the grid for every element, not just i == 0.
+ *
+ * ----------------------------------------------------------------------------
+ */
+
+int
+calmaSnapMfgGridStep(
+    int step)			/* per-element displacement, internal units */
+{
+    static bool warned = FALSE;
+    int snapped = calmaSnapMfgGrid(step);
+
+    if ((snapped == 0) && (step != 0))
+    {
+	if (!warned)
+	{
+	    TxError("Warning: array pitch %d (internal units) is under half the "
+		    "manufacturing grid; writing the array at its design pitch "
+		    "rather than collapsing it onto one element.\n", step);
+	    warned = TRUE;
+	}
+	return step;
+    }
+    return snapped;
+}
+
     /* Exports */
 bool CalmaDoLibrary = FALSE;	  /* If TRUE, do not output the top level */
 bool CalmaDoLabels = TRUE;	  /* If FALSE, don't output labels with GDS-II */
@@ -1627,9 +1667,12 @@ calmaWriteUseFunc(
     const unsigned char *whichangle;
     int x, y, topx, topy, rows, cols, xxlate, yxlate, hdrsize;
     int rectype, stransflags;
+    int xorigin, yorigin;	/* snapped instance origin, internal units */
+    int colstepx, colstepy;	/* per-element column step, internal units */
+    int rowstepx, rowstepy;	/* per-element row step, internal units	   */
     Transform *t;
     bool isArray = FALSE;
-    Point p, p2;
+    Point p2;
 
     topx = use->cu_xhi - use->cu_xlo;
     if (topx < 0) topx = -topx;
@@ -1680,6 +1723,37 @@ calmaWriteUseFunc(
 	else whichangle = r270;
     }
 
+    /*
+     * vibeic fork (roadmap #37):  the manufacturing-grid snap, as ONE
+     * decomposition shared by every form the writer can take (AREF, flattened
+     * SREFs, plain SREF) -- an origin and two per-element step vectors:
+     *
+     *	   element(i,j) = origin + i*colstep + j*rowstep
+     *
+     * The array's PITCH and SHAPE live in the STEPS, and an AREF stores them
+     * only implicitly, as the difference between its three XY points.  Snapping
+     * the origin while leaving those points where they were therefore does not
+     * move the array onto the grid -- it DEFORMS it: every reader derives a
+     * step short by (snap delta)/cols, so the pitch changes and the rows shear.
+     * Measured on this fork before the fix, a 2x2 array of a use snapped +20 nm
+     * came out with a 9990 nm pitch (design 10000), a -10 nm shear on row 1,
+     * and 3 of its 4 elements still off the grid.
+     *
+     * Snapping the origin and the steps SEPARATELY, then rebuilding the
+     * reference points from them, keeps the array rigid AND puts every element
+     * on the grid.  Magic transforms are orthogonal with unit scale, so the
+     * column step is exactly (t_a*xsep, t_d*xsep) and the row step exactly
+     * (t_b*ysep, t_e*ysep) -- integers, snappable componentwise.  With no
+     * manufacturing grid every one of these is an identity and the bytes
+     * written are stock magic's.
+     */
+    xorigin = calmaSnapMfgGrid(t->t_c);
+    yorigin = calmaSnapMfgGrid(t->t_f);
+    colstepx = calmaSnapMfgGridStep(t->t_a * use->cu_xsep);
+    colstepy = calmaSnapMfgGridStep(t->t_d * use->cu_xsep);
+    rowstepx = calmaSnapMfgGridStep(t->t_b * use->cu_ysep);
+    rowstepy = calmaSnapMfgGridStep(t->t_e * use->cu_ysep);
+
     if (CalmaFlattenArrays)
     {
 	for (x = 0; x <= topx; x++)
@@ -1702,15 +1776,13 @@ calmaWriteUseFunc(
 		}
 
 		/* Translation */
-		xxlate = t->t_c + t->t_a*(use->cu_xsep)*x
-				+ t->t_b*(use->cu_ysep)*y;
-		yxlate = t->t_f + t->t_d*(use->cu_xsep)*x
-				+ t->t_e*(use->cu_ysep)*y;
-		/* vibeic fork (roadmap #37): snap the expanded-array instance	*/
-		/* origin to the manufacturing grid (internal units) before	*/
-		/* scaling to GDS units.  No-op when no tech-LEF grid is known.	*/
-		xxlate = calmaSnapMfgGrid(xxlate);
-		yxlate = calmaSnapMfgGrid(yxlate);
+		/* vibeic fork (roadmap #37): built from the SNAPPED origin and	*/
+		/* the SNAPPED steps, so the flattened elements land exactly	*/
+		/* where the AREF form puts them.  Snapping each element's	*/
+		/* absolute position instead would round every element on its	*/
+		/* own and give the same array a non-uniform pitch.		*/
+		xxlate = xorigin + colstepx*x + rowstepx*y;
+		yxlate = yorigin + colstepy*x + rowstepy*y;
 		xxlate *= calmaWriteScale;
 		yxlate *= calmaWriteScale;
 		calmaOutRH(12, CALMA_XY, CALMA_I4, f);
@@ -1754,10 +1826,10 @@ calmaWriteUseFunc(
 	}
 
 	/* Translation */
-	/* vibeic fork (roadmap #37): snap the instance origin to the		*/
-	/* manufacturing grid (internal units) before scaling to GDS units.	*/
-	xxlate = calmaSnapMfgGrid(t->t_c) * calmaWriteScale;
-	yxlate = calmaSnapMfgGrid(t->t_f) * calmaWriteScale;
+	/* vibeic fork (roadmap #37): the snapped instance origin, in internal	*/
+	/* units, scaled to GDS units.						*/
+	xxlate = xorigin * calmaWriteScale;
+	yxlate = yorigin * calmaWriteScale;
 	hdrsize = isArray ? 28 : 12;
 	calmaOutRH(hdrsize, CALMA_XY, CALMA_I4, f);
 	calmaOutI4(xxlate, f);
@@ -1766,21 +1838,19 @@ calmaWriteUseFunc(
 	/* Array sizes if an array */
 	if (isArray)
 	{
-	    /* Column reference point */
-	    p.p_x = use->cu_xsep * cols;
-	    p.p_y = 0;
-	    GeoTransPoint(t, &p, &p2);
-	    p2.p_x *= calmaWriteScale;
-	    p2.p_y *= calmaWriteScale;
+	    /* Column reference point.  GDS defines it as origin + cols*step,	*/
+	    /* so it is REBUILT from the snapped origin and the snapped step	*/
+	    /* rather than transformed independently: a reference point left	*/
+	    /* behind while the origin moves changes the pitch every reader	*/
+	    /* derives, which is a deformation of the array, not a snap.	*/
+	    p2.p_x = (xorigin + colstepx * cols) * calmaWriteScale;
+	    p2.p_y = (yorigin + colstepy * cols) * calmaWriteScale;
 	    calmaOutI4(p2.p_x, f);
 	    calmaOutI4(p2.p_y, f);
 
 	    /* Row reference point */
-	    p.p_x = 0;
-	    p.p_y = use->cu_ysep * rows;
-	    GeoTransPoint(t, &p, &p2);
-	    p2.p_x *= calmaWriteScale;
-	    p2.p_y *= calmaWriteScale;
+	    p2.p_x = (xorigin + rowstepx * rows) * calmaWriteScale;
+	    p2.p_y = (yorigin + rowstepy * rows) * calmaWriteScale;
 	    calmaOutI4(p2.p_x, f);
 	    calmaOutI4(p2.p_y, f);
 	}
