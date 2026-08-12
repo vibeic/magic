@@ -599,6 +599,13 @@ CmdExtToSpice(
     static const char * const spiceFormats[] = {
 	"SPICE2", "SPICE3", "HSPICE", "NGSPICE", "CDL", "SPEF", NULL
     };
+    /* Every table below that is subscripted by esFormat must carry one entry
+     * per format code in ext2spice.h plus the NULL terminator.  These are the
+     * unexercisable half of the defect fixed here: an out-of-range subscript
+     * has no failing test to write, so make it fail the BUILD instead.
+     */
+    typedef char spiceFormats_covers_every_format[
+	(sizeof(spiceFormats) / sizeof(spiceFormats[0]) == SPEF + 2) ? 1 : -1];
 
     static const char * const cmdExtToSpcOption[] = {
 	"[run] [options]	run exttospice on current cell\n"
@@ -649,6 +656,9 @@ CmdExtToSpice(
 	"spef",
 	NULL
     };
+    /* Subscripted by esFormat in EXTTOSPC_FORMAT; same build-time gate. */
+    typedef char cmdExtToSpcFormat_covers_every_format[
+	(sizeof(cmdExtToSpcFormat) / sizeof(cmdExtToSpcFormat[0]) == SPEF + 2) ? 1 : -1];
 
     static const char * const yesno[] = {
 	"yes",
@@ -1605,9 +1615,22 @@ main(
 
     esSpiceDevsMerged = 0;
 
+    /* This table is indexed by esFormat, so it MUST carry one entry per
+     * format code in ext2spice.h.  It had four, while spcParseArgs has
+     * accepted "-f cdl" (CDL == 4) for as long as CDL has existed: the
+     * header fprintf below then read the NULL terminator and passed it to
+     * "%s".  The vibeic fork added SPEF (== 5), which reads one element
+     * PAST the end of the array.  Both are fixed by listing every format.
+     */
     static const char * const spiceFormats[] = {
-	"SPICE2", "SPICE3", "HSPICE", "NGSPICE", NULL
+	"SPICE2", "SPICE3", "HSPICE", "NGSPICE", "CDL", "SPEF", NULL
     };
+    /* Same build-time gate as in CmdExtToSpice(): this program is deprecated
+     * and no longer links (extflat now needs database/ symbols), so the table
+     * is unreachable at run time and only the compiler can police it.
+     */
+    typedef char mainSpiceFormats_covers_every_format[
+	(sizeof(spiceFormats) / sizeof(spiceFormats[0]) == SPEF + 2) ? 1 : -1];
 
     EFInit();
     EFResistThreshold = INFINITE_THRESHOLD ;
@@ -1668,6 +1691,21 @@ main(
     if (EFReadFile(inName, TRUE, esDoExtResis, FALSE, TRUE) == FALSE)
     {
 	exit (1);
+    }
+
+    /* vibeic fork (roadmap #28): SPEF diverges here, exactly as it does in
+     * CmdExtToSpice().  Without this, "-f spef" in the standalone program
+     * would name the file "<cell>.spef" (the branch above) and then fill it
+     * with SPICE -- the same shape of silent-wrong-output defect this change
+     * exists to remove.  One flag, one meaning, in both front ends.
+     */
+    if (esFormat == SPEF)
+    {
+	int nnets = spefWriteNetwork(esSpiceF, inName);
+	fclose(esSpiceF);
+	esSpiceF = NULL;
+	TxPrintf("ext2spice: wrote %d nets to SPEF file %s\n", nnets, spcesOutName);
+	exit (0);
     }
 
     fprintf(esSpiceF, "* %s file created from %s.ext - technology: %s\n\n",
@@ -1799,7 +1837,7 @@ spcParseArgs(
 
     const char usage_text[] = "Usage: ext2spice "
 		"[-B] [-o spicefile] [-M|-m] [-J flat|hier]\n"
-		"[-f spice2|spice3|hspice|ngspice|cdl] [-M] [-m] "
+		"[-f spice2|spice3|hspice|ngspice|cdl|spef] [-M] [-m] "
 		"[file]\n";
 
     switch (argv[0][1])
@@ -1845,6 +1883,17 @@ spcParseArgs(
 		esFormat = NGSPICE;
 	    else if (strcasecmp(ftmp, "CDL") == 0)
 		esFormat = CDL;
+	    /* vibeic fork (roadmap #28): ext2spice has TWO independent format
+	     * registries -- the "ext2spice format <type>" subcommand parsed
+	     * against cmdExtToSpcFormat[] in CmdExtToSpice(), and the "-f <type>"
+	     * flag parsed here.  SPEF was added to the first and not the second,
+	     * so "ext2spice -f spef -o out" fell through to `goto usage`, which
+	     * under MAGIC_WRAPPER returns *without* raising a Tcl error: the
+	     * command reported success and wrote no file at all.  Both registries
+	     * must accept the same set of formats.
+	     */
+	    else if (strcasecmp(ftmp, "SPEF") == 0)
+		esFormat = SPEF;
 	    else goto usage;
 	    break;
 

@@ -27,13 +27,18 @@
 #         coupling NET1<->NET2 : 300 * 500*100 / 1000           = 15000 fF
 #         *D_NET NET1 total = 10000 + 15000                     = 25000 fF
 #         *D_NET NET2 total = its share of the coupling         = 15000 fF
+#   6 FLAG FORM    same fixture as 1, selected with "-f spef" instead of
+#                  "format spef"                                 byte-identical
 #
 # 3 and 4 are the proven-negatives: the value must move by the exact
 # hand-computed factor when the GEOMETRY changes and again when the tech
 # COEFFICIENT changes, so neither a hardcoded constant nor a value copied from
 # elsewhere can satisfy the gate.  2 anchors the SPEF unit conversion against
 # magic's own SPICE path.  5 proves coupling is attributed to BOTH nets (listed
-# once under NET1, but counted in NET2's *D_NET total).
+# once under NET1, but counted in NET2's *D_NET total).  6 covers the SECOND
+# way a caller selects the format: ext2spice has two independent format
+# registries and SPEF was registered in only one, so "ext2spice -f spef -o out"
+# reported SUCCESS and wrote no file at all.
 #
 # ISOLATION: every case runs in its OWN directory.  A stale cell.ext left by a
 # previous case is silently reused by magic and produces wrong-but-plausible
@@ -58,7 +63,8 @@ GEN="$HERE/../lvs_bridge_tech_multimetal/gen_bridge_tech.py"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-cp "$HERE"/extract_spef.tcl "$HERE"/geom_plate.tcl "$HERE"/geom_couple.tcl "$WORK"/
+cp "$HERE"/extract_spef.tcl "$HERE"/extract_spef_flag.tcl \
+   "$HERE"/geom_plate.tcl "$HERE"/geom_couple.tcl "$WORK"/
 cp "$HERE"/../lvs_bridge_tech_multimetal/stack.lef "$WORK"/
 cp "$GEN" "$WORK"/gen_bridge_tech.py
 cd "$WORK" || exit 2
@@ -76,13 +82,16 @@ mktech() {
 }
 
 # run one case in its OWN directory (no stale cell.ext can leak between cases)
-run() {   # $1 tag  $2 areacap  $3 geometry.tcl  $4 fmt  $5 WX  $6 WY
+# $7 selects the driver: default = "format <fmt>" subcommand, "flag" = "-f <fmt>"
+run() {   # $1 tag  $2 areacap  $3 geometry.tcl  $4 fmt  $5 WX  $6 WY  [$7 driver]
     local d="$WORK/$1"
+    local drv=extract_spef.tcl
+    [ "${7:-}" = "flag" ] && drv=extract_spef_flag.tcl
     rm -rf "$d"; mkdir -p "$d"
     mktech "$2" > "$d/bridge.tech"
-    cp extract_spef.tcl "$3" "$d"/
+    cp "$drv" "$3" "$d"/
     ( cd "$d" && TECHF=./bridge.tech GEOM="$3" FMT="$4" OUT=out WX="${5:-0}" WY="${6:-0}" \
-        "$MAGIC_BIN" -dnull -noconsole extract_spef.tcl >log 2>&1 )
+        "$MAGIC_BIN" -dnull -noconsole "$drv" >log 2>&1 )
     [ -f "$d/out" ] || fail "$1: ext2spice produced no output (see $d/log)"
 }
 
@@ -121,8 +130,26 @@ check "5 coupling NET1-NET2 -> 300*500*100/1000" "$(coupcap c5/out)"      "15000
 check "5 *D_NET NET1 total  -> 10000 + 15000"    "$(dnet    c5/out NET1)" "25000"
 check "5 *D_NET NET2 total  -> coupling share"   "$(dnet    c5/out NET2)" "15000"
 
+# ---- 6. BOTH format registries select SPEF ---------------------------------
+# ext2spice reaches the same run through two independent format registries:
+#   "ext2spice format spef" + "ext2spice -o out"   (cases 1-5 above)
+#   "ext2spice -f spef -o out"                     (this case)
+# They are parsed by different code (cmdExtToSpcFormat[] in CmdExtToSpice vs
+# the strcasecmp chain in spcParseArgs), and SPEF was registered in only the
+# first.  The second then fell through to `goto usage`, which under
+# MAGIC_WRAPPER returns WITHOUT raising a Tcl error -- so "-f spef" reported
+# success and wrote nothing.  Driving the IDENTICAL fixture (same tech
+# coefficient, same geometry, same cell) through the flag form and demanding a
+# byte-identical file catches both halves: the missing file, and a file
+# produced in the wrong format.
+run c6 100 geom_plate.tcl spef 1000 100 flag
+cmp -s c1/out c6/out \
+    || fail "6 '-f spef' output differs from 'format spef' output:$(printf '\n')$(diff c1/out c6/out | head -20)"
+echo "  6 '-f spef -o out' == 'format spef' + '-o out', byte for byte"
+
 echo "PASS: SPEF *D_NET/*CONN/*CAP carries the extracted ground and coupling"
 echo "      capacitance at the exact hand-computed values, agrees with magic's"
-echo "      own SPICE emission, and tracks both geometry and tech coefficient."
+echo "      own SPICE emission, tracks both geometry and tech coefficient, and"
+echo "      is reachable through BOTH the 'format' subcommand and the '-f' flag."
 echo "NOTE: the *RES section is implemented but NOT verified by this gate."
 exit 0
