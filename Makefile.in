@@ -192,9 +192,18 @@ docs:
 #     make install && make test
 #     make test MAGIC_BIN=/foss/tools/magic/bin/magic
 #     make test TESTS="spef_output lef_extract_tech"
+#
+# `test` runs `test-registration` FIRST.  The gates cannot notice a gate that is
+# not in the runner's list -- an unregistered gate produces no PASS, no FAIL and
+# no SKIP, and the summary line still reads "FAILED: 0".  That check is static
+# (no build, no PDK, no magic), which is also what lets the fork-gatekeeper run
+# it in a merge worktree before anything has been compiled.
 # ---------------------------------------------------------------------------
-.PHONY: test check
-test:
+.PHONY: test check test-registration
+test-registration:
+	@$${PYTHON:-python3} ${MAGICSRC}/test/check_gate_registration.py ${MAGICSRC}
+
+test: test-registration
 	@MAGIC_BIN="$${MAGIC_BIN:-$(DESTDIR)${INSTALL_BINDIR}/magic}" \
 	 NETGEN_BIN="${NETGEN_BIN}" TESTS="${TESTS}" \
 	    ${MAGICSRC}/test/run_all.sh
