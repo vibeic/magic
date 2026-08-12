@@ -165,6 +165,42 @@ docs:
 	@${MAKE} -j1 -k -C doc/latexfiles all || \
 	    echo "--- WARNING: some documents did not regenerate; the pre-built PostScript will be used for those at 'make install'"
 
+# ---------------------------------------------------------------------------
+# test / check -- run the regression gates in test/*/ (test/run_all.sh).
+#
+# .PHONY IS LOAD-BEARING, NOT TIDINESS.  `test` is a real DIRECTORY in this
+# tree, so before this rule existed make resolved the goal against it:
+#
+#     $ make test
+#     make: Nothing to be done for 'test'.        <-- exit 0, ran nothing
+#
+# Nine regression gates were sitting in that directory and a CI step written as
+# `make test` would have reported success on every one of them, forever. Without
+# .PHONY the same rule would still be shadowed by the up-to-date directory and
+# the recipe would never fire, which is the identical false green wearing a
+# recipe. `check` is the GNU-conventional alias.
+#
+# It deliberately does NOT depend on `all`/`install`: this is a Tcl build, so the
+# runnable `magic` exists only after `make install` (the build tree holds
+# magic/tclmagic.so and no wrapper), and the gates are just as valid run against
+# an already-installed magic. The runner resolves the binary in this order --
+# MAGIC_BIN, then the install prefix, then PATH -- and ERRORS OUT (never skips)
+# if it finds none, because a suite that "passes" without the tool under test
+# has proven nothing. Per-gate optional dependencies (netgen, a sky130A magicrc,
+# python3) degrade to a NAMED, printed SKIP instead.
+#
+#     make install && make test
+#     make test MAGIC_BIN=/foss/tools/magic/bin/magic
+#     make test TESTS="spef_output lef_extract_tech"
+# ---------------------------------------------------------------------------
+.PHONY: test check
+test:
+	@MAGIC_BIN="$${MAGIC_BIN:-$(DESTDIR)${INSTALL_BINDIR}/magic}" \
+	 NETGEN_BIN="${NETGEN_BIN}" TESTS="${TESTS}" \
+	    ${MAGICSRC}/test/run_all.sh
+
+check: test
+
 install: $(INSTALL_TARGET)
 
 install-magic:
