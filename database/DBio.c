@@ -2457,30 +2457,44 @@ dbReadProperties(cellDef, line, len, f, scalen, scaled)
 	/* Read the string value from the file, accounting for overflow */
 	pvalueptr = &propertyvalue[0];
 
-	/* Handle string overflows in property values */
+	/* Handle string overflows in property values.  If "line" was	*/
+	/* filled completely by dbFgets() without finding a newline,	*/
+	/* then the property value scanned above was cut off where	*/
+	/* "line" was cut off, and more of it remains to be read.	*/
+	/* Keep appending 2048-byte chunks, always writing the next	*/
+	/* chunk at the current end of the string (per strlen()), until	*/
+	/* a chunk is read that is not itself cut off at the boundary.	*/
+	/* (Code issue corrected by Claude Opus, 8/26/2026)		*/
+
 	if (line[len - 1] == '\0')
 	{
-	    int pvlen = strlen(pvalueptr);
-	    *(pvalueptr + pvlen - 1) = '\0';
+	    int curlen = strlen(pvalueptr);
 
-	    while (*(pvalueptr + pvlen - 1) == '\0')
+	    while (TRUE)
 	    {
 		char *newpvalue;
+		int newsize = curlen + 2048;
 
-		pvlen += 2048;
-		newpvalue = (char *)mallocMagic(pvlen);
+		newpvalue = (char *)mallocMagic(newsize);
 		strcpy(newpvalue, pvalueptr);
 		if (pvalueptr != &propertyvalue[0])
 		    freeMagic(pvalueptr);
 		pvalueptr = newpvalue;
-		*(pvalueptr + pvlen - 1) = 'X';
-		if (dbFgets(newpvalue + pvlen - 2048, 2048, f) == NULL)
+
+		/* Sentinel:  detect whether dbFgets() fills this	*/
+		/* entire new chunk, meaning there is still more to	*/
+		/* read.						*/
+
+		*(pvalueptr + newsize - 1) = 'X';
+		if (dbFgets(pvalueptr + curlen, 2048, f) == NULL)
 		{
 		    /* Oops, hit end-of-file in the middle of a property */
 		    freeMagic(pvalueptr);
 		    cellDef->cd_flags |= noeditflag;
 		    return (TRUE);
 		}
+		if (*(pvalueptr + newsize - 1) != '\0') break;
+		curlen = strlen(pvalueptr);
 	    }
 
 	    /* "pvalueptr" now points to a string containing the complete
@@ -2592,6 +2606,7 @@ dbReadProperties(cellDef, line, len, f, scalen, scaled)
 		    {
 			Rect r;
 			while (isspace(*pptr) && (*pptr != '\0')) pptr++;
+			if (*pptr == '\0') break;
 			if (!isspace(*pptr))
 			{
 			    if (sscanf(pptr, "%d", &ival) != 1)
