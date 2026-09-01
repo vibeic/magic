@@ -879,10 +879,19 @@ CmdSelect(
     globmatch = NULL;
     bzero(&scx, sizeof(SearchContext));
     windCheckOnlyWindow(&w, DBWclientID);
+
+    /* Quick check on 1st argument to avoid rejecting command options
+     * "select do|no|simple labels" and "select help" if the cursor is not
+     * in a layout window, since these two options don't require it.
+     */
     if ((w == (MagWindow *) NULL) || (w->w_client != DBWclientID))
     {
-	TxError("Put the cursor in a layout window\n");
-	return;
+	if (strcmp(cmd->tx_argv[1], "simple") && strcmp(cmd->tx_argv[1], "help")
+		&& strcmp(cmd->tx_argv[1], "do") && strcmp(cmd->tx_argv[1], "no"))
+	{
+	    TxError("Put the cursor in a layout window\n");
+	    return;
+	}
     }
 
     /* See if "more" was given.  If so, just strip off the "more" from
